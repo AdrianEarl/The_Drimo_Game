@@ -30,7 +30,7 @@ export const GAME_SETTINGS = {
   obstacleSpawnMin: 3500,
   obstacleSpawnMax: 6500,
 
-  showHitboxes: true
+  showHitboxes: false
 };
 
 export const GAME_CONFIG = {
