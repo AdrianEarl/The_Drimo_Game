@@ -1,4 +1,3 @@
-
 import Phaser from "phaser";
 import { GAME_SETTINGS } from "../config/gameConfig";
 
@@ -54,15 +53,11 @@ export default class Drimo {
   }
 
   update(deltaSeconds, keys, cursors) {
-    let moveY = 0;
+    const up = keys.up.isDown || cursors.up.isDown;
+    const down = keys.down.isDown || cursors.down.isDown;
 
-    if (keys.up.isDown || cursors.up.isDown) {
-      moveY = -1;
-    }
-
-    if (keys.down.isDown || cursors.down.isDown) {
-      moveY = 1;
-    }
+    // Opposite keys cancel out (previously "down" always won)
+    const moveY = (down ? 1 : 0) - (up ? 1 : 0);
 
     this.sprite.y += moveY * this.speed * deltaSeconds;
 

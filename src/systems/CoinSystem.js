@@ -1,4 +1,3 @@
-
 import Phaser from "phaser";
 import { GAME_SETTINGS } from "../config/gameConfig";
 
@@ -15,9 +14,13 @@ export default class CoinSystem {
     this.coinSpacing = 80;
 
     this.spawnTimer = 0;
-    this.nextSpawn = Phaser.Math.Between(4000, 5000) / 1000;
+    this.nextSpawn = this.randomSpawnDelay();
 
     this.createAnimation();
+  }
+
+  randomSpawnDelay() {
+    return Phaser.Math.Between(4000, 5000) / 1000;
   }
 
   // =================================
@@ -67,12 +70,10 @@ export default class CoinSystem {
 
       if (!obstacle || !obstacle.active) continue;
 
-      const obstacleBounds = obstacle.getBounds();
-
       if (
         Phaser.Geom.Intersects.RectangleToRectangle(
           coinBounds,
-          obstacleBounds
+          obstacle.getBounds()
         )
       ) {
         return false;
@@ -84,6 +85,7 @@ export default class CoinSystem {
 
   // =================================
   // 03. SPAWN COIN GROUP
+  // Returns true if a group was spawned
   // =================================
 
   spawnGroup() {
@@ -123,7 +125,7 @@ export default class CoinSystem {
     }
 
     if (spawnY === null) {
-      return;
+      return false;
     }
 
     for (let i = 0; i < coinCount; i++) {
@@ -139,6 +141,8 @@ export default class CoinSystem {
 
       this.coins.push(coin);
     }
+
+    return true;
   }
 
   // =================================
@@ -152,12 +156,9 @@ export default class CoinSystem {
       return false;
     }
 
-    const coinBounds = coin.getBounds();
-    const footHitbox = hitboxes.foot;
-
     return Phaser.Geom.Intersects.RectangleToRectangle(
-      footHitbox,
-      coinBounds
+      hitboxes.foot,
+      coin.getBounds()
     );
   }
 
@@ -166,15 +167,19 @@ export default class CoinSystem {
   // =================================
 
   update(deltaSeconds) {
-    this.spawnTimer += deltaSeconds;
+    // Spawn timer scales with difficulty, same as obstacles
+    const speedMultiplier = this.scene.speedMultiplier || 1;
+    this.spawnTimer += deltaSeconds * speedMultiplier;
 
     if (this.spawnTimer >= this.nextSpawn) {
-      this.spawnGroup();
-
       this.spawnTimer = 0;
 
-      this.nextSpawn =
-        Phaser.Math.Between(4000, 5000) / 1000;
+      if (this.spawnGroup()) {
+        this.nextSpawn = this.randomSpawnDelay();
+      } else {
+        // No clear spot: retry soon instead of waiting a full cycle
+        this.nextSpawn = GAME_SETTINGS.spawnRetryDelay;
+      }
     }
 
     for (let i = this.coins.length - 1; i >= 0; i--) {

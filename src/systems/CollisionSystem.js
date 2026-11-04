@@ -1,29 +1,35 @@
-
 import Phaser from "phaser";
+import { GAME_SETTINGS } from "../config/gameConfig";
 
 export default class CollisionSystem {
   constructor() {
     this.damageHitbox = "foot";
   }
 
+  // Single source of truth for the obstacle hitbox.
+  // ObstacleSystem uses this same rectangle for debug drawing.
+  getObstacleBounds(obstacle) {
+    const bounds = obstacle.getBounds();
+    const scale = GAME_SETTINGS.obstacleHitboxScale;
+
+    const width = bounds.width * scale;
+    const height = bounds.height * scale;
+
+    return new Phaser.Geom.Rectangle(
+      bounds.centerX - width / 2,
+      bounds.centerY - height / 2,
+      width,
+      height
+    );
+  }
+
   checkPotholeCollision(drimo, obstacle) {
     const hitboxes = drimo.getHitboxes();
 
-    const footBounds = hitboxes.foot;
-
-    const obstacleBounds = obstacle.getBounds();
-
-    // REDUCE OBSTACLE HITBOX TO 90%
-    obstacleBounds.x += obstacleBounds.width * 0.05;
-    obstacleBounds.width *= 0.90;
-
-    obstacleBounds.y += obstacleBounds.height * 0.05;
-    obstacleBounds.height *= 0.90;
-
     // ONLY THE FOOT HITBOX CAUSES DAMAGE
     return Phaser.Geom.Intersects.RectangleToRectangle(
-      footBounds,
-      obstacleBounds
+      hitboxes.foot,
+      this.getObstacleBounds(obstacle)
     );
   }
 

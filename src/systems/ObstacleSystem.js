@@ -1,4 +1,3 @@
-
 import Phaser from "phaser";
 import { GAME_SETTINGS } from "../config/gameConfig";
 
@@ -16,12 +15,16 @@ export default class ObstacleSystem {
     this.height = GAME_SETTINGS.obstacleHeight;
 
     this.spawnTimer = 0;
+    this.nextSpawn = this.randomSpawnDelay();
+  }
 
-    this.nextSpawn =
+  randomSpawnDelay() {
+    return (
       Phaser.Math.Between(
         GAME_SETTINGS.obstacleSpawnMin,
         GAME_SETTINGS.obstacleSpawnMax
-      ) / 1000;
+      ) / 1000
+    );
   }
 
   // =================================
@@ -41,12 +44,10 @@ export default class ObstacleSystem {
     for (const coin of coins) {
       if (!coin || !coin.active) continue;
 
-      const coinBounds = coin.getBounds();
-
       if (
         Phaser.Geom.Intersects.RectangleToRectangle(
           obstacleBounds,
-          coinBounds
+          coin.getBounds()
         )
       ) {
         return false;
@@ -58,6 +59,7 @@ export default class ObstacleSystem {
 
   // =================================
   // 02. SPAWN OBSTACLE
+  // Returns true if an obstacle was spawned
   // =================================
 
   spawn() {
@@ -82,9 +84,8 @@ export default class ObstacleSystem {
       }
     }
 
-    // Skip spawning if no clear position is available
     if (spawnY === null) {
-      return;
+      return false;
     }
 
     const obstacle = this.scene.add.image(
@@ -94,12 +95,7 @@ export default class ObstacleSystem {
     );
 
     obstacle.setOrigin(0.5, 1);
-
-    obstacle.setDisplaySize(
-      this.width,
-      this.height
-    );
-
+    obstacle.setDisplaySize(this.width, this.height);
     obstacle.setDepth(8);
 
     const hitboxGraphics = this.scene.add.graphics();
@@ -110,21 +106,17 @@ export default class ObstacleSystem {
       hitboxGraphics,
       hasCollided: false
     });
+
+    return true;
   }
 
   // =================================
   // 03. COLLISION BOUNDS
+  // Same rectangle the collision check uses
   // =================================
 
   getCollisionBounds(obstacle) {
-    const bounds = obstacle.getBounds();
-
-    return new Phaser.Geom.Rectangle(
-      bounds.x + bounds.width * 0.15,
-      bounds.y + bounds.height * 0.15,
-      bounds.width * 0.70,
-      bounds.height * 0.70
-    );
+    return this.collisionSystem.getObstacleBounds(obstacle);
   }
 
   // =================================
@@ -132,14 +124,13 @@ export default class ObstacleSystem {
   // =================================
 
   drawCollisionBox(obstacleData) {
-    const obstacle = obstacleData.sprite;
     const graphics = obstacleData.hitboxGraphics;
 
     graphics.clear();
 
     if (!GAME_SETTINGS.showHitboxes) return;
 
-    const bounds = this.getCollisionBounds(obstacle);
+    const bounds = this.getCollisionBounds(obstacleData.sprite);
 
     graphics.lineStyle(3, 0xcc00ff, 1);
 
@@ -156,25 +147,23 @@ export default class ObstacleSystem {
   // =================================
 
   update(deltaSeconds) {
-    this.spawnTimer += deltaSeconds;
+    // Spawn timer runs faster as the game speeds up, so
+    // obstacle density keeps up with the difficulty.
+    const speedMultiplier = this.scene.speedMultiplier || 1;
+    this.spawnTimer += deltaSeconds * speedMultiplier;
 
     if (this.spawnTimer >= this.nextSpawn) {
-      this.spawn();
-
       this.spawnTimer = 0;
 
-      this.nextSpawn =
-        Phaser.Math.Between(
-          GAME_SETTINGS.obstacleSpawnMin,
-          GAME_SETTINGS.obstacleSpawnMax
-        ) / 1000;
+      if (this.spawn()) {
+        this.nextSpawn = this.randomSpawnDelay();
+      } else {
+        // No clear spot: retry soon instead of waiting a full cycle
+        this.nextSpawn = GAME_SETTINGS.spawnRetryDelay;
+      }
     }
 
-    for (
-      let i = this.obstacles.length - 1;
-      i >= 0;
-      i--
-    ) {
+    for (let i = this.obstacles.length - 1; i >= 0; i--) {
       const obstacleData = this.obstacles[i];
       const obstacle = obstacleData.sprite;
 
@@ -199,6 +188,10 @@ export default class ObstacleSystem {
           obstacleData.hasCollided = true;
 
           this.onCollision();
+
+          // Death clears this.obstacles and destroys sprites,
+          // so stop iterating immediately.
+          if (this.scene.gameOver) return;
         }
       }
 

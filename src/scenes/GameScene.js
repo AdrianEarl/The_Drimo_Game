@@ -1,4 +1,3 @@
-
 import Phaser from "phaser";
 
 import { GAME_SETTINGS } from "../config/gameConfig";
@@ -86,8 +85,6 @@ export default class GameScene extends Phaser.Scene {
     this.createPlayer();
     this.createInterface();
     this.createSystems();
-
-    this.setupKeyboardTests();
   }
 
   // =================================
@@ -179,6 +176,7 @@ export default class GameScene extends Phaser.Scene {
     );
 
     // CALCULATE SPEED MULTIPLIER
+    // (also read by the obstacle/coin spawn timers)
     this.speedMultiplier =
       this.backgroundSpeed /
       GAME_SETTINGS.backgroundSpeed;
@@ -209,6 +207,9 @@ export default class GameScene extends Phaser.Scene {
     this.roadBottom =
       this.worldHeight * GAME_SETTINGS.obstacleBottom;
 
+    // Debug lines are only created in debug mode
+    if (!GAME_SETTINGS.debug) return;
+
     this.roadTopDebug = this.add.rectangle(
       this.worldWidth / 2,
       this.roadTop,
@@ -231,21 +232,21 @@ export default class GameScene extends Phaser.Scene {
   // =================================
 
   createControls() {
-    this.keys = this.input.keyboard.addKeys({
+    const keyMap = {
       up: Phaser.Input.Keyboard.KeyCodes.W,
       down: Phaser.Input.Keyboard.KeyCodes.S,
-      damage: Phaser.Input.Keyboard.KeyCodes.H,
-      collect: Phaser.Input.Keyboard.KeyCodes.C,
       restart: Phaser.Input.Keyboard.KeyCodes.R
-    });
+    };
+
+    // Test keys exist only in debug mode
+    if (GAME_SETTINGS.debug) {
+      keyMap.damage = Phaser.Input.Keyboard.KeyCodes.H;
+      keyMap.collect = Phaser.Input.Keyboard.KeyCodes.C;
+    }
+
+    this.keys = this.input.keyboard.addKeys(keyMap);
 
     this.cursors = this.input.keyboard.createCursorKeys();
-  }
-
-  setupKeyboardTests() {
-    // H = TEST DAMAGE
-    // C = TEST COIN COLLECTION
-    // R = RESTART AFTER GAME OVER
   }
 
   // =================================
@@ -314,8 +315,6 @@ export default class GameScene extends Phaser.Scene {
 
     this.gameOver = true;
 
-    console.log("GAME OVER TRIGGERED");
-
     const player = this.drimo.getSprite();
 
     if (player && player.active) {
@@ -351,7 +350,10 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
 
-    const deltaSeconds = delta / 1000;
+    // Clamp frame time so lag spikes / tab switches
+    // can't teleport objects through the player
+    const deltaSeconds =
+      Math.min(delta, GAME_SETTINGS.maxDeltaMs) / 1000;
 
     // UPDATE DIFFICULTY
     this.updateDifficulty(deltaSeconds);
@@ -366,30 +368,27 @@ export default class GameScene extends Phaser.Scene {
       this.cursors
     );
 
-    // OBSTACLES
+    // OBSTACLES (may end the game)
     this.obstacleSystem.update(deltaSeconds);
 
+    // Kept on purpose: also stops coins from spawning
+    // in the same frame the game ended
     if (this.gameOver) return;
 
     // COINS
     this.coinSystem.update(deltaSeconds);
 
-    // H = TEST DAMAGE
-    if (
-      Phaser.Input.Keyboard.JustDown(
-        this.keys.damage
-      )
-    ) {
-      this.healthSystem.takeDamage();
-    }
+    // DEBUG TEST KEYS
+    if (GAME_SETTINGS.debug) {
+      // H = TEST DAMAGE
+      if (Phaser.Input.Keyboard.JustDown(this.keys.damage)) {
+        this.healthSystem.takeDamage();
+      }
 
-    // C = TEST COIN COLLECTION
-    if (
-      Phaser.Input.Keyboard.JustDown(
-        this.keys.collect
-      )
-    ) {
-      this.scoreSystem.collectCoin();
+      // C = TEST COIN COLLECTION
+      if (Phaser.Input.Keyboard.JustDown(this.keys.collect)) {
+        this.scoreSystem.collectCoin();
+      }
     }
   }
 }

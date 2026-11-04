@@ -1,4 +1,3 @@
-
 import Phaser from "phaser";
 
 export const GAME_SETTINGS = {
@@ -6,7 +5,7 @@ export const GAME_SETTINGS = {
   height: 1080,
 
   // BACKGROUND DIFFICULTY
-  backgroundSpeed: 180,
+  backgroundSpeed: 450,
   backgroundSpeedIncrease: 1.5,
   backgroundSpeedMax: 450,
 
@@ -24,12 +23,25 @@ export const GAME_SETTINGS = {
   maxHealth: 100,
   damagePerHit: 10,
 
-  obstacleSpeed: 180,
+  obstacleSpeed: 450,
   obstacleWidth: 320,
   obstacleHeight: 100,
   obstacleSpawnMin: 3500,
   obstacleSpawnMax: 6500,
 
+  // Single source of truth for the obstacle damage hitbox
+  // (used by both collision checks and the debug drawing)
+  obstacleHitboxScale: 0.90,
+
+  // If a spawn fails (no clear spot), retry after this many seconds
+  spawnRetryDelay: 0.3,
+
+  // Max frame time (ms) used by the game loop, prevents
+  // objects teleporting after lag spikes or tab switches
+  maxDeltaMs: 50,
+
+  // DEBUG: road boundary lines + H (damage) / C (coin) test keys
+  debug: false,
   showHitboxes: false
 };
 
