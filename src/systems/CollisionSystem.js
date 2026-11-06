@@ -24,6 +24,11 @@ export default class CollisionSystem {
   }
 
   checkPotholeCollision(drimo, obstacle) {
+    // JUMPING OVER A POTHOLE (or DASHING THROUGH IT) IS SAFE
+    if (drimo.isInvulnerable()) {
+      return false;
+    }
+
     const hitboxes = drimo.getHitboxes();
 
     // ONLY THE FOOT HITBOX CAUSES DAMAGE

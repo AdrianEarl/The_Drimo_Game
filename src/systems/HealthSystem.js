@@ -1,4 +1,3 @@
-
 import { GAME_SETTINGS } from "../config/gameConfig";
 
 export default class HealthSystem {
@@ -13,7 +12,7 @@ export default class HealthSystem {
     this.damagePerHit = GAME_SETTINGS.damagePerHit;
 
     this.invincible = false;
-    this.invincibilityDuration = 5000;
+    this.invincibilityDuration = GAME_SETTINGS.invincibilityDuration;
 
     this.blinkTimer = null;
     this.blinkTween = null;
@@ -24,6 +23,7 @@ export default class HealthSystem {
 
   // =================================
   // UPDATE HEALTH DISPLAY
+  // (the HUD also handles the low-health warning)
   // =================================
 
   updateHUD() {
@@ -42,6 +42,13 @@ export default class HealthSystem {
       return false;
     }
 
+    // A shield absorbs the hit completely
+    const powerUps = this.scene.powerUpSystem;
+
+    if (powerUps && powerUps.consumeShield()) {
+      return false;
+    }
+
     this.health = Math.max(
       0,
       this.health - this.damagePerHit
@@ -49,16 +56,49 @@ export default class HealthSystem {
 
     this.updateHUD();
 
+    // A hit resets the combo
+    if (this.scene.scoreSystem) {
+      this.scene.scoreSystem.registerHit();
+    }
+
+    // Damage feedback
+    const camera = this.scene.cameras.main;
+
+    camera.shake(220, 0.012);
+    camera.flash(180, 255, 40, 40);
+
     // Check Game Over
     if (this.health <= 0) {
       this.onDeath();
       return true;
     }
 
-    // Start 5-second invincibility
+    // Start invincibility
     this.startInvincibility();
 
     return true;
+  }
+
+  // =================================
+  // HEAL
+  // Returns how much health was actually restored
+  // =================================
+
+  heal(amount) {
+    if (this.health <= 0) {
+      return 0;
+    }
+
+    const before = this.health;
+
+    this.health = Math.min(
+      this.maxHealth,
+      this.health + amount
+    );
+
+    this.updateHUD();
+
+    return this.health - before;
   }
 
   // =================================
@@ -68,24 +108,27 @@ export default class HealthSystem {
   startInvincibility() {
     this.invincible = true;
 
-    const player = this.scene.drimo.getSprite();
-
-    if (!player || !player.active) return;
-
-    this.blinkTween = this.scene.tweens.add({
-      targets: player,
-      alpha: 0.45,
-      duration: 180,
-      yoyo: true,
-      repeat: -1
-    });
-
+    // Always schedule the end of invincibility, even if the
+    // sprite is unavailable, so the player can never get stuck
+    // permanently invincible.
     this.blinkTimer = this.scene.time.delayedCall(
       this.invincibilityDuration,
       () => {
         this.endInvincibility();
       }
     );
+
+    const player = this.scene.drimo.getSprite();
+
+    if (player && player.active) {
+      this.blinkTween = this.scene.tweens.add({
+        targets: player,
+        alpha: 0.45,
+        duration: 180,
+        yoyo: true,
+        repeat: -1
+      });
+    }
   }
 
   endInvincibility() {
