@@ -10,10 +10,24 @@ import HealthSystem from "../systems/HealthSystem";
 import ScoreSystem from "../systems/ScoreSystem";
 import CoinSystem from "../systems/CoinSystem";
 import PowerUpSystem from "../systems/PowerUpSystem";
+import BackgroundSystem from "../systems/BackgroundSystem";
 
 import HUD from "../ui/HUD";
 import GameOverScreen from "../ui/GameOverScreen";
 import MenuScreens from "../ui/MenuScreens";
+
+// =================================
+// ASSET SETTINGS (edit these to match your files)
+// =================================
+
+// Number of frames in /assets/characters/jump/jump-1.png, jump-2.png, ...
+const JUMP_FRAME_COUNT = 5;
+
+// Number of frames in /assets/characters/death/death-1.png, death-2.png, ...
+const DEATH_FRAME_COUNT = 5;
+
+// Coin pickup sound
+const COIN_SFX_PATH = "/assets/audio/coin.mp3";
 
 const formatMultiplier = (value) =>
   Number.isInteger(value) ? String(value) : value.toFixed(1);
@@ -44,11 +58,13 @@ export default class GameScene extends Phaser.Scene {
   // =================================
 
   preload() {
-    this.load.image(
-      "nightScene",
-      "/assets/backgrounds/night-scene.png"
-    );
+    // BACKGROUNDS (with their start / end transitions)
+    BackgroundSystem.preload(this);
 
+    // OBSTACLES
+    ObstacleSystem.preload(this);
+
+    // DRIMO: RUN
     for (let i = 1; i <= 8; i++) {
       const frame = String(i).padStart(2, "0");
 
@@ -58,10 +74,25 @@ export default class GameScene extends Phaser.Scene {
       );
     }
 
-    this.load.image(
-      "obstacle-01",
-      "/assets/obstacles/obstacles-01.png"
-    );
+    // DRIMO: JUMP
+    for (let i = 1; i <= JUMP_FRAME_COUNT; i++) {
+      const frame = String(i).padStart(2, "0");
+
+      this.load.image(
+        `drimo-jump-${frame}`,
+        `/assets/characters/jump/jump-${i}.png`
+      );
+    }
+
+    // DRIMO: DEATH
+    for (let i = 1; i <= DEATH_FRAME_COUNT; i++) {
+      const frame = String(i).padStart(2, "0");
+
+      this.load.image(
+        `drimo-death-${frame}`,
+        `/assets/characters/death/death-${i}.png`
+      );
+    }
 
     // LOAD COIN FRAMES
     for (let i = 1; i <= 5; i++) {
@@ -72,6 +103,9 @@ export default class GameScene extends Phaser.Scene {
         `/assets/coins/coins-${frame}.png`
       );
     }
+
+    // SOUND EFFECTS
+    this.load.audio("coin-sfx", COIN_SFX_PATH);
   }
 
   // =================================
@@ -133,41 +167,7 @@ export default class GameScene extends Phaser.Scene {
   // =================================
 
   createBackground() {
-    const bg = this.textures
-      .get("nightScene")
-      .getSourceImage();
-
-    this.bgBaseScale = this.worldHeight / bg.height;
-
-    this.bgDisplayWidth =
-      bg.width * this.bgBaseScale;
-
-    this.backgrounds = [];
-
-    const imageCount =
-      Math.ceil(
-        this.worldWidth / this.bgDisplayWidth
-      ) + 2;
-
-    for (let i = 0; i < imageCount; i++) {
-      const background = this.add.image(
-        0,
-        this.worldHeight / 2,
-        "nightScene"
-      );
-
-      background.setOrigin(0.5);
-      background.setScale(this.bgBaseScale);
-      background.setDepth(0);
-
-      background.worldX =
-        this.bgDisplayWidth / 2 +
-        i * this.bgDisplayWidth;
-
-      background.x = background.worldX;
-
-      this.backgrounds.push(background);
-    }
+    this.backgroundSystem = new BackgroundSystem(this);
   }
 
   // =================================
@@ -175,27 +175,7 @@ export default class GameScene extends Phaser.Scene {
   // =================================
 
   updateBackground(deltaSeconds, speed = this.backgroundSpeed) {
-    for (const background of this.backgrounds) {
-      background.worldX -= speed * deltaSeconds;
-    }
-
-    let rightmostX = Math.max(
-      ...this.backgrounds.map(bg => bg.worldX)
-    );
-
-    for (const background of this.backgrounds) {
-      if (
-        background.worldX +
-        this.bgDisplayWidth / 2 < 0
-      ) {
-        background.worldX =
-          rightmostX + this.bgDisplayWidth;
-
-        rightmostX = background.worldX;
-      }
-
-      background.x = background.worldX;
-    }
+    this.backgroundSystem.update(deltaSeconds, speed);
   }
 
   // =================================
@@ -219,11 +199,9 @@ export default class GameScene extends Phaser.Scene {
       difficultySpeed / GAME_SETTINGS.backgroundSpeed;
 
     // COMBINE EVERY SPEED MODIFIER:
-    // difficulty x dash x slow-mo power-up x milestone surge
+    // difficulty x milestone surge
     const combined =
       this.difficultyMultiplier *
-      this.drimo.getDashBoost() *
-      this.powerUpSystem.getSlowFactor() *
       this.eventSpeedFactor;
 
     // Effective world speed. The spawn timers read this too,
@@ -285,9 +263,9 @@ export default class GameScene extends Phaser.Scene {
     const keyMap = {
       up: KeyCodes.W,
       down: KeyCodes.S,
-      dash: KeyCodes.SPACE,
-      jump: KeyCodes.J,
-      jumpAlt: KeyCodes.SHIFT,
+      jump: KeyCodes.SPACE,
+      jumpAlt: KeyCodes.J,
+      jumpAlt2: KeyCodes.SHIFT,
       pause: KeyCodes.P,
       escape: KeyCodes.ESC,
       start: KeyCodes.ENTER,
@@ -311,9 +289,9 @@ export default class GameScene extends Phaser.Scene {
   // can't fire the moment a new state begins
   flushKeys() {
     const names = [
-      "dash",
       "jump",
       "jumpAlt",
+      "jumpAlt2",
       "pause",
       "escape",
       "start",
@@ -396,6 +374,15 @@ export default class GameScene extends Phaser.Scene {
     const points = this.scoreSystem.collectCoin();
 
     this.hud.spawnFloatingText(x, y - 20, `+${points}`);
+
+    this.playCoinSound();
+  }
+
+  playCoinSound() {
+    // Skip quietly if the sound file did not load
+    if (!this.cache.audio.exists("coin-sfx")) return;
+
+    this.sound.play("coin-sfx", { volume: 0.6 });
   }
 
   handleGroupResolved(result, x, y) {
@@ -615,11 +602,8 @@ export default class GameScene extends Phaser.Scene {
     this.gameOver = true;
     this.state = "gameover";
 
-    const player = this.drimo.getSprite();
-
-    if (player && player.active) {
-      player.anims.stop();
-    }
+    // Lets the death animation finish on its last frame
+    this.drimo.stopAnimation();
 
     this.obstacleSystem.clear();
     this.coinSystem.clear();
@@ -693,7 +677,7 @@ export default class GameScene extends Phaser.Scene {
     this.updateBackground(deltaSeconds, this.idleSpeed());
 
     if (
-      Phaser.Input.Keyboard.JustDown(this.keys.dash) ||
+      Phaser.Input.Keyboard.JustDown(this.keys.jump) ||
       Phaser.Input.Keyboard.JustDown(this.keys.start)
     ) {
       this.beginCountdown();
@@ -792,15 +776,15 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
 
-    // ACTIONS
-    if (Phaser.Input.Keyboard.JustDown(this.keys.dash)) {
-      this.drimo.startDash();
-    }
+    // ACTIONS (SPACE, J or SHIFT = jump)
+    // JustDown is read for every key so none of them stays "pending"
+    const jumpPressed = [
+      Phaser.Input.Keyboard.JustDown(this.keys.jump),
+      Phaser.Input.Keyboard.JustDown(this.keys.jumpAlt),
+      Phaser.Input.Keyboard.JustDown(this.keys.jumpAlt2)
+    ].some(Boolean);
 
-    if (
-      Phaser.Input.Keyboard.JustDown(this.keys.jump) ||
-      Phaser.Input.Keyboard.JustDown(this.keys.jumpAlt)
-    ) {
+    if (jumpPressed) {
       this.drimo.startJump();
     }
 
@@ -815,6 +799,9 @@ export default class GameScene extends Phaser.Scene {
 
     this.scoreSystem.addDistance(meters);
     this.checkMilestones();
+
+    // BACKGROUND CHANGES EVERY 1000 METERS
+    this.backgroundSystem.setDistance(this.scoreSystem.distance);
 
     // BACKGROUND + SPEED LINES
     this.updateBackground(deltaSeconds);
@@ -843,11 +830,6 @@ export default class GameScene extends Phaser.Scene {
     this.powerUpSystem.update(deltaSeconds);
 
     // HUD
-    this.hud.updateDash(
-      this.drimo.getDashCharge(),
-      this.drimo.isDashing()
-    );
-
     this.hud.updatePowerUps(
       this.powerUpSystem.getActiveList()
     );

@@ -3,54 +3,19 @@ import { GAME_SETTINGS } from "../config/gameConfig";
 
 const TEXTURE_SIZE = 72;
 
+// The magnet is the only power-up in the game.
 const TYPES = {
-  shield: {
-    label: "SHIELD",
-    pickup: "SHIELD!",
-    color: 0x3aa8ff,
-    duration: GAME_SETTINGS.shieldDuration
-  },
   magnet: {
     label: "MAGNET",
     pickup: "MAGNET!",
     color: 0xff4d4d,
     duration: GAME_SETTINGS.magnetDuration
-  },
-  slow: {
-    label: "SLOW-MO",
-    pickup: "SLOW-MO!",
-    color: 0xa66bff,
-    duration: GAME_SETTINGS.slowMoDuration
-  },
-  double: {
-    label: "2X SCORE",
-    pickup: "2X SCORE!",
-    color: 0xffc933,
-    duration: GAME_SETTINGS.doubleScoreDuration
-  },
-  heal: {
-    label: "HEAL",
-    pickup: "HEAL!",
-    color: 0xff6b9a,
-    duration: 0 // instant
   }
 };
 
 // =================================
 // ICON DRAWING (no image assets needed)
 // =================================
-
-function fillPolygon(graphics, points) {
-  graphics.beginPath();
-  graphics.moveTo(points[0][0], points[0][1]);
-
-  for (let i = 1; i < points.length; i++) {
-    graphics.lineTo(points[i][0], points[i][1]);
-  }
-
-  graphics.closePath();
-  graphics.fillPath();
-}
 
 function drawBadge(graphics, color) {
   const c = TEXTURE_SIZE / 2;
@@ -65,74 +30,23 @@ function drawBadge(graphics, color) {
   graphics.strokeCircle(c, c, c - 4);
 }
 
-function drawIcon(graphics, type, color) {
+function drawMagnetIcon(graphics, color) {
   drawBadge(graphics, color);
 
   graphics.fillStyle(0xffffff, 1);
   graphics.lineStyle(9, 0xffffff, 1);
 
-  switch (type) {
-    case "shield":
-      fillPolygon(graphics, [
-        [22, 20], [50, 20], [50, 38], [36, 54], [22, 38]
-      ]);
+  // U-shape: two legs + bottom half circle
+  graphics.beginPath();
+  graphics.moveTo(24, 20);
+  graphics.lineTo(24, 36);
+  graphics.arc(36, 36, 12, Math.PI, 0, true);
+  graphics.lineTo(48, 20);
+  graphics.strokePath();
 
-      graphics.fillStyle(color, 1);
-      fillPolygon(graphics, [
-        [27, 25], [45, 25], [45, 36], [36, 47], [27, 36]
-      ]);
-      break;
-
-    case "magnet":
-      // U-shape: two legs + bottom half circle
-      graphics.beginPath();
-      graphics.moveTo(24, 20);
-      graphics.lineTo(24, 36);
-      graphics.arc(36, 36, 12, Math.PI, 0, true);
-      graphics.lineTo(48, 20);
-      graphics.strokePath();
-
-      graphics.fillStyle(0xffd0d0, 1);
-      graphics.fillRect(19.5, 15, 9, 9);
-      graphics.fillRect(43.5, 15, 9, 9);
-      break;
-
-    case "slow":
-      // Hourglass
-      fillPolygon(graphics, [[23, 18], [49, 18], [36, 36]]);
-      fillPolygon(graphics, [[36, 36], [49, 54], [23, 54]]);
-      graphics.fillRect(21, 14, 30, 5);
-      graphics.fillRect(21, 53, 30, 5);
-      break;
-
-    case "double": {
-      // Star
-      const points = [];
-
-      for (let i = 0; i < 10; i++) {
-        const radius = i % 2 === 0 ? 18 : 8;
-        const angle = -Math.PI / 2 + (i * Math.PI) / 5;
-
-        points.push([
-          36 + Math.cos(angle) * radius,
-          37 + Math.sin(angle) * radius
-        ]);
-      }
-
-      fillPolygon(graphics, points);
-      break;
-    }
-
-    case "heal":
-      // Heart
-      graphics.fillCircle(28, 31, 10);
-      graphics.fillCircle(44, 31, 10);
-      graphics.fillTriangle(19, 35, 53, 35, 36, 54);
-      break;
-
-    default:
-      break;
-  }
+  graphics.fillStyle(0xffd0d0, 1);
+  graphics.fillRect(19.5, 15, 9, 9);
+  graphics.fillRect(43.5, 15, 9, 9);
 }
 
 export default class PowerUpSystem {
@@ -152,24 +66,22 @@ export default class PowerUpSystem {
     PowerUpSystem.createTextures(scene);
   }
 
-  // Draws every icon once into a texture (shared across restarts)
+  // Draws the magnet icon once into a texture (shared across restarts)
   static createTextures(scene) {
-    Object.keys(TYPES).forEach((type) => {
-      const key = `powerup-${type}`;
+    const key = "powerup-magnet";
 
-      if (scene.textures.exists(key)) return;
+    if (scene.textures.exists(key)) return;
 
-      const graphics = scene.make.graphics({
-        x: 0,
-        y: 0,
-        add: false
-      });
-
-      drawIcon(graphics, type, TYPES[type].color);
-
-      graphics.generateTexture(key, TEXTURE_SIZE, TEXTURE_SIZE);
-      graphics.destroy();
+    const graphics = scene.make.graphics({
+      x: 0,
+      y: 0,
+      add: false
     });
+
+    drawMagnetIcon(graphics, TYPES.magnet.color);
+
+    graphics.generateTexture(key, TEXTURE_SIZE, TEXTURE_SIZE);
+    graphics.destroy();
   }
 
   randomSpawnDelay() {
@@ -187,10 +99,6 @@ export default class PowerUpSystem {
 
   isActive(key) {
     return (this.active[key] || 0) > 0;
-  }
-
-  getSlowFactor() {
-    return this.isActive("slow") ? GAME_SETTINGS.slowMoFactor : 1;
   }
 
   // For the HUD: active timed power-ups with remaining time
@@ -215,46 +123,6 @@ export default class PowerUpSystem {
   // =================================
   // SPAWNING
   // =================================
-
-  pickType() {
-    const maxHealth = GAME_SETTINGS.maxHealth;
-
-    const health = this.scene.healthSystem
-      ? this.scene.healthSystem.getHealth()
-      : maxHealth;
-
-    const weights = {
-      shield: 3,
-      magnet: 3,
-      slow: 2,
-      double: 3,
-      heal: 0
-    };
-
-    // Hearts only show up when the player is actually hurt
-    if (health < maxHealth) {
-      weights.heal = health <= maxHealth * 0.5 ? 6 : 3;
-    }
-
-    const keys = Object.keys(weights);
-
-    const total = keys.reduce(
-      (sum, key) => sum + weights[key],
-      0
-    );
-
-    let roll = Phaser.Math.FloatBetween(0, total);
-
-    for (const key of keys) {
-      roll -= weights[key];
-
-      if (roll <= 0 && weights[key] > 0) {
-        return key;
-      }
-    }
-
-    return "shield";
-  }
 
   canSpawnAt(x, y) {
     const size = GAME_SETTINGS.powerUpSize;
@@ -330,19 +198,17 @@ export default class PowerUpSystem {
       return false;
     }
 
-    const type = this.pickType();
-
     const sprite = this.scene.add.image(
       x,
       spawnY,
-      `powerup-${type}`
+      "powerup-magnet"
     );
 
     sprite.setDisplaySize(size, size);
     sprite.setDepth(8);
 
     this.items.push({
-      type,
+      type: "magnet",
       sprite,
       baseScale: sprite.scaleX,
       time: Math.random() * Math.PI * 2
@@ -375,71 +241,21 @@ export default class PowerUpSystem {
     const def = TYPES[item.type];
     const x = item.sprite.x;
     const y = item.sprite.y;
-    const hud = this.scene.hud;
 
-    if (item.type === "heal") {
-      const healed = this.scene.healthSystem.heal(
-        GAME_SETTINGS.healAmount
-      );
-
-      hud.spawnFloatingText(
-        x,
-        y - 40,
-        healed > 0 ? `+${healed} HP` : def.pickup,
-        "#ff9ec0",
-        38
-      );
-
-      return;
-    }
-
-    // Picking up the same type again refreshes the timer
+    // Picking up another magnet refreshes the timer
     this.active[item.type] = def.duration;
 
-    if (item.type === "shield") {
-      this.scene.drimo.setShield(true);
-    }
-
-    if (item.type === "double") {
-      this.scene.scoreSystem.setDoubleScore(true);
-    }
-
-    hud.spawnFloatingText(x, y - 40, def.pickup, "#ffffff", 38);
+    this.scene.hud.spawnFloatingText(
+      x,
+      y - 40,
+      def.pickup,
+      "#ffffff",
+      38
+    );
   }
 
   expire(key) {
     delete this.active[key];
-
-    if (key === "shield") {
-      this.scene.drimo.setShield(false);
-    }
-
-    if (key === "double") {
-      this.scene.scoreSystem.setDoubleScore(false);
-    }
-  }
-
-  // Called by HealthSystem. Returns true if a shield absorbed the hit.
-  consumeShield() {
-    if (!this.isActive("shield")) {
-      return false;
-    }
-
-    this.expire("shield");
-
-    this.scene.cameras.main.flash(150, 80, 180, 255);
-
-    const center = this.scene.drimo.getCenter();
-
-    this.scene.hud.spawnFloatingText(
-      center.x,
-      center.y - 100,
-      "BLOCKED!",
-      "#9eeaff",
-      40
-    );
-
-    return true;
   }
 
   // =================================

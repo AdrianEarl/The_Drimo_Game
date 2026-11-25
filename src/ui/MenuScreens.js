@@ -75,8 +75,7 @@ export default class MenuScreens {
       760,
       [
         "W / S  or  ↑ / ↓   -   MOVE",
-        "SPACE   -   DASH (speed burst, can't be hit)",
-        "J  or  SHIFT   -   JUMP over potholes",
+        "SPACE  (or  J  /  SHIFT)   -   JUMP over obstacles",
         "P  or  ESC   -   PAUSE"
       ].join("\n"),
       {

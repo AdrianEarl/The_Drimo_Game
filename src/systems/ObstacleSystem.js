@@ -1,53 +1,113 @@
 import Phaser from "phaser";
 import { GAME_SETTINGS } from "../config/gameConfig";
 
-// Obstacle variants. They all use the same image, with different
-// size, tint and movement. minTime = seconds survived before the
-// type can appear.
-const OBSTACLE_TYPES = [
+const OBSTACLE_PATH = "/assets/obstacles";
+
+// Obstacle types (all of them are static, none move).
+//
+// key / file : texture key and file name in public/assets/obstacles
+// weight     : how often it is picked (higher = more common)
+// scale      : height relative to GAME_SETTINGS.obstacleHeight.
+//              The width follows the image's own proportions.
+// footprint  : how much of the BOTTOM of the image can hurt Drimo
+//              (1 = the whole image, 0.5 = the bottom half)
+// jump       : how high Drimo must be to clear it, as a fraction of
+//              GAME_SETTINGS.jumpHeight (higher = needs a bigger jump)
+// minTime    : seconds survived before it can appear
+export const OBSTACLE_TYPES = [
   {
-    id: "normal",
-    weight: 5,
+    id: "pothole",
+    key: "obstacle-pothole",
+    file: "Pothole-Obstacle.png",
+    weight: 4,
     scale: 1,
-    tint: null,
+    footprint: 1,
+    jump: 0.15,
     minTime: 0
   },
   {
-    id: "big",
-    weight: 2,
-    scale: 1.35,
-    tint: 0xff9e9e,
+    id: "puddle",
+    key: "obstacle-puddle",
+    file: "Puddle-Obstacle.png",
+    weight: 3,
+    scale: 1,
+    footprint: 1,
+    jump: 0.15,
+    minTime: 0
+  },
+  {
+    id: "cone",
+    key: "obstacle-cone",
+    file: "Cone-Obstacle.png",
+    weight: 3,
+    scale: 1,
+    footprint: 0.5,
+    jump: 0.3,
+    minTime: 0
+  },
+  {
+    id: "rock",
+    key: "obstacle-rock",
+    file: "Rock-Obstacle.png",
+    weight: 3,
+    scale: 1,
+    footprint: 0.6,
+    jump: 0.35,
+    minTime: 5
+  },
+  {
+    id: "log",
+    key: "obstacle-log",
+    file: "Log-Obstacle.png",
+    weight: 2.5,
+    scale: 1,
+    footprint: 0.6,
+    jump: 0.4,
     minTime: 10
   },
   {
-    id: "small",
+    id: "trash-can",
+    key: "obstacle-trash-can",
+    file: "Trash-Can-Obstacle.png",
     weight: 2,
-    scale: 0.7,
-    tint: 0x9ed0ff,
-    minTime: 0
+    scale: 1.15,
+    footprint: 0.5,
+    jump: 0.45,
+    minTime: 15
   },
   {
-    // Wobbles up and down around its spawn lane
-    id: "wobble",
+    id: "hurdle",
+    key: "obstacle-hurdle",
+    file: "Hurdle-Obstacle.png",
     weight: 2,
-    scale: 1,
-    tint: 0xd09eff,
-    minTime: 20,
-    wobbleAmp: 45,
-    wobbleFreq: 2.2
+    scale: 1.1,
+    footprint: 0.4,
+    jump: 0.5,
+    minTime: 20
   },
   {
-    // Slides up and down the whole road, bouncing off the edges
-    id: "mover",
+    id: "barrier",
+    key: "obstacle-barrier",
+    file: "Barrier-Obstacle.png",
     weight: 1.5,
-    scale: 1,
-    tint: 0xffd27a,
-    minTime: 40,
-    vy: 110
+    scale: 1.1,
+    footprint: 0.5,
+    jump: 0.55,
+    minTime: 25
   }
 ];
 
 export default class ObstacleSystem {
+  // Called from GameScene.preload()
+  static preload(scene) {
+    for (const type of OBSTACLE_TYPES) {
+      scene.load.image(
+        type.key,
+        `${OBSTACLE_PATH}/${type.file}`
+      );
+    }
+  }
+
   constructor(scene, collisionSystem, onCollision) {
     this.scene = scene;
     this.collisionSystem = collisionSystem;
@@ -57,7 +117,6 @@ export default class ObstacleSystem {
 
     this.speed = GAME_SETTINGS.obstacleSpeed;
 
-    this.width = GAME_SETTINGS.obstacleWidth;
     this.height = GAME_SETTINGS.obstacleHeight;
 
     this.roadTop =
@@ -86,9 +145,16 @@ export default class ObstacleSystem {
   pickType() {
     const elapsed = this.scene.elapsedTime || 0;
 
+    // Only types that are unlocked and whose image loaded
     const pool = OBSTACLE_TYPES.filter(
-      type => elapsed >= type.minTime
+      type =>
+        elapsed >= type.minTime &&
+        this.scene.textures.exists(type.key)
     );
+
+    if (pool.length === 0) {
+      return null;
+    }
 
     const total = pool.reduce(
       (sum, type) => sum + type.weight,
@@ -112,13 +178,12 @@ export default class ObstacleSystem {
   // 01. CHECK COIN OVERLAP
   // =================================
 
-  canSpawnAt(y, width, height, amplitude) {
-    // Covers the full vertical sweep of wobbling obstacles
+  canSpawnAt(y, width, height) {
     const obstacleBounds = new Phaser.Geom.Rectangle(
       GAME_SETTINGS.width + 100 - width / 2,
-      y - height - amplitude,
+      y - height,
       width,
-      height + amplitude * 2
+      height
     );
 
     const coins = this.scene.coinSystem?.coins || [];
@@ -147,13 +212,21 @@ export default class ObstacleSystem {
   spawn() {
     const type = this.pickType();
 
-    const width = this.width * type.scale;
+    if (!type) {
+      return false;
+    }
+
+    // Keep the image's own proportions
+    const source = this.scene.textures
+      .get(type.key)
+      .getSourceImage();
+
     const height = this.height * type.scale;
-    const amplitude = type.wobbleAmp || 0;
+    const width = height * (source.width / source.height);
 
     // Origin is bottom-center, so y is the bottom edge
-    const minY = this.roadTop + height + amplitude;
-    const maxY = this.roadBottom - amplitude;
+    const minY = this.roadTop + height;
+    const maxY = this.roadBottom;
 
     if (maxY < minY) {
       return false;
@@ -165,7 +238,7 @@ export default class ObstacleSystem {
     for (let attempt = 0; attempt < 30; attempt++) {
       const candidateY = Phaser.Math.Between(minY, maxY);
 
-      if (this.canSpawnAt(candidateY, width, height, amplitude)) {
+      if (this.canSpawnAt(candidateY, width, height)) {
         spawnY = candidateY;
         break;
       }
@@ -178,16 +251,12 @@ export default class ObstacleSystem {
     const obstacle = this.scene.add.image(
       GAME_SETTINGS.width + 100,
       spawnY,
-      "obstacle-01"
+      type.key
     );
 
     obstacle.setOrigin(0.5, 1);
     obstacle.setDisplaySize(width, height);
     obstacle.setDepth(8);
-
-    if (type.tint !== undefined && type.tint !== null) {
-      obstacle.setTint(type.tint);
-    }
 
     const hitboxGraphics = this.scene.add.graphics();
     hitboxGraphics.setDepth(9);
@@ -199,14 +268,9 @@ export default class ObstacleSystem {
       type: type.id,
       width,
       height,
-      baseY: spawnY,
-      amplitude,
-      frequency: type.wobbleFreq || 0,
-      phase: Math.random() * Math.PI * 2,
-      age: 0,
-      vy: type.vy
-        ? (Math.random() < 0.5 ? -1 : 1) * type.vy
-        : 0
+      footprint: type.footprint,
+      // Jump height (pixels) needed to clear this obstacle
+      clearance: Math.max(20, type.jump * GAME_SETTINGS.jumpHeight)
     });
 
     return true;
@@ -217,8 +281,11 @@ export default class ObstacleSystem {
   // Same rectangle the collision check uses
   // =================================
 
-  getCollisionBounds(obstacle) {
-    return this.collisionSystem.getObstacleBounds(obstacle);
+  getCollisionBounds(obstacleData) {
+    return this.collisionSystem.getObstacleBounds(
+      obstacleData.sprite,
+      obstacleData.footprint
+    );
   }
 
   // =================================
@@ -232,7 +299,7 @@ export default class ObstacleSystem {
 
     if (!GAME_SETTINGS.showHitboxes) return;
 
-    const bounds = this.getCollisionBounds(obstacleData.sprite);
+    const bounds = this.getCollisionBounds(obstacleData);
 
     graphics.lineStyle(3, 0xcc00ff, 1);
 
@@ -283,44 +350,18 @@ export default class ObstacleSystem {
         continue;
       }
 
-      obstacleData.age += deltaSeconds;
-
+      // Obstacles only scroll toward the player
       obstacle.x -= this.speed * deltaSeconds;
-
-      // WOBBLE: oscillate around the spawn lane
-      if (obstacleData.amplitude > 0) {
-        obstacle.y =
-          obstacleData.baseY +
-          Math.sin(
-            obstacleData.age * obstacleData.frequency +
-            obstacleData.phase
-          ) * obstacleData.amplitude;
-      }
-
-      // MOVER: slide up/down the road and bounce off the edges
-      if (obstacleData.vy !== 0) {
-        const minY = this.roadTop + obstacleData.height;
-        const maxY = this.roadBottom;
-
-        obstacle.y += obstacleData.vy * deltaSeconds;
-
-        if (obstacle.y <= minY) {
-          obstacle.y = minY;
-          obstacleData.vy = Math.abs(obstacleData.vy);
-        } else if (obstacle.y >= maxY) {
-          obstacle.y = maxY;
-          obstacleData.vy = -Math.abs(obstacleData.vy);
-        }
-      }
 
       this.drawCollisionBox(obstacleData);
 
       // ONLY FOOT COLLISION CAUSES DAMAGE
       if (!dying && !obstacleData.hasCollided) {
         if (
-          this.collisionSystem.checkPotholeCollision(
+          this.collisionSystem.checkObstacleCollision(
             this.scene.drimo,
-            obstacle
+            obstacle,
+            obstacleData
           )
         ) {
           obstacleData.hasCollided = true;

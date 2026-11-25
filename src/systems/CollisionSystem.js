@@ -8,24 +8,35 @@ export default class CollisionSystem {
 
   // Single source of truth for the obstacle hitbox.
   // ObstacleSystem uses this same rectangle for debug drawing.
-  getObstacleBounds(obstacle) {
+  //
+  // footprint = fraction of the obstacle (measured from the
+  // bottom) that can hurt. 1 = the whole image, so tall objects
+  // only hurt at their base instead of at their top.
+  getObstacleBounds(obstacle, footprint = 1) {
     const bounds = obstacle.getBounds();
     const scale = GAME_SETTINGS.obstacleHitboxScale;
 
     const width = bounds.width * scale;
     const height = bounds.height * scale;
 
+    const left = bounds.centerX - width / 2;
+    const bottom = bounds.centerY + height / 2;
+
+    const hurtHeight = height * footprint;
+
     return new Phaser.Geom.Rectangle(
-      bounds.centerX - width / 2,
-      bounds.centerY - height / 2,
+      left,
+      bottom - hurtHeight,
       width,
-      height
+      hurtHeight
     );
   }
 
-  checkPotholeCollision(drimo, obstacle) {
-    // JUMPING OVER A POTHOLE (or DASHING THROUGH IT) IS SAFE
-    if (drimo.isInvulnerable()) {
+  // obstacleData = the entry stored in ObstacleSystem
+  // ({ footprint, clearance, ... })
+  checkObstacleCollision(drimo, obstacle, obstacleData) {
+    // JUMPING HIGH ENOUGH CLEARS THE OBSTACLE
+    if (drimo.getJumpOffset() >= obstacleData.clearance) {
       return false;
     }
 
@@ -34,7 +45,7 @@ export default class CollisionSystem {
     // ONLY THE FOOT HITBOX CAUSES DAMAGE
     return Phaser.Geom.Intersects.RectangleToRectangle(
       hitboxes.foot,
-      this.getObstacleBounds(obstacle)
+      this.getObstacleBounds(obstacle, obstacleData.footprint)
     );
   }
 

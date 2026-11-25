@@ -1,9 +1,8 @@
 const formatMultiplier = (value) =>
   Number.isInteger(value) ? String(value) : value.toFixed(1);
 
-const POWERUP_ROWS = 4;
+const POWERUP_ROWS = 1;
 const POWERUP_BAR_WIDTH = 160;
-const DASH_BAR_WIDTH = 260;
 
 export default class HUD {
   constructor(scene) {
@@ -128,40 +127,6 @@ export default class HUD {
     this.lastDistance = -1;
 
     // =================================
-    // DASH BAR (bottom-left)
-    // =================================
-
-    this.dashLabel = scene.add.text(
-      60,
-      1010,
-      "DASH [SPACE]",
-      {
-        fontFamily: "Arial",
-        fontSize: "22px",
-        color: "#ffffff",
-        fontStyle: "bold",
-        stroke: "#000000",
-        strokeThickness: 4
-      }
-    ).setOrigin(0, 0.5);
-
-    this.dashBarBg = scene.add.rectangle(
-      60,
-      1042,
-      DASH_BAR_WIDTH,
-      16,
-      0x333333
-    ).setOrigin(0, 0.5);
-
-    this.dashBarFill = scene.add.rectangle(
-      60,
-      1042,
-      DASH_BAR_WIDTH,
-      16,
-      0x35d0ff
-    ).setOrigin(0, 0.5);
-
-    // =================================
     // POWER-UP INDICATORS (top-left)
     // =================================
 
@@ -269,9 +234,6 @@ export default class HUD {
     this.distanceText.setDepth(100);
     this.comboText.setDepth(100);
     this.bestText.setDepth(100);
-    this.dashLabel.setDepth(100);
-    this.dashBarBg.setDepth(100);
-    this.dashBarFill.setDepth(101);
     this.bannerTitle.setDepth(120);
     this.bannerSub.setDepth(120);
   }
@@ -457,25 +419,6 @@ export default class HUD {
     }
 
     this.lastMultiplier = multiplier;
-  }
-
-  // =================================
-  // DASH BAR
-  // =================================
-
-  updateDash(charge, dashing) {
-    this.dashBarFill.width = DASH_BAR_WIDTH * charge;
-
-    if (dashing) {
-      this.dashBarFill.setFillStyle(0xffffff);
-      this.dashLabel.setText("DASHING!");
-    } else if (charge >= 1) {
-      this.dashBarFill.setFillStyle(0x35d0ff);
-      this.dashLabel.setText("DASH READY [SPACE]");
-    } else {
-      this.dashBarFill.setFillStyle(0x4a6a80);
-      this.dashLabel.setText("DASH");
-    }
   }
 
   // =================================

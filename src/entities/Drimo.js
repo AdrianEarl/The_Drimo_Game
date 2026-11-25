@@ -1,6 +1,13 @@
 import Phaser from "phaser";
 import { GAME_SETTINGS } from "../config/gameConfig";
 
+// Highest frame number we look for when building animations.
+// Frames must be numbered 01, 02, 03... with no gaps.
+const MAX_FRAMES = 40;
+
+// How long the death animation takes to play (seconds)
+const DEATH_ANIM_SECONDS = 0.9;
+
 export default class Drimo {
   constructor(scene) {
     this.scene = scene;
@@ -8,47 +15,63 @@ export default class Drimo {
     this.speed = GAME_SETTINGS.playerSpeed;
 
     this.alive = true;
-    this.fxTime = 0;
 
     // JUMP STATE
     this.jumping = false;
     this.jumpTime = 0;
     this.jumpOffset = 0;
+    this.jumpAnimActive = false;
 
-    // DASH STATE
-    this.dashTimer = 0;
-    this.dashCooldownTimer = 0;
-    this.dashBoost = 1;
-    this.dashOffsetX = 0;
-    this.afterimageTimer = 0;
-
-    // SHIELD STATE
-    this.shieldActive = false;
+    // Frame lists (filled in createAnimations)
+    this.jumpFrames = [];
+    this.deathFrames = [];
 
     this.createAnimations();
     this.createSprite();
     this.createShadow();
-    this.createShield();
     this.createHitboxGraphics();
   }
 
-  createAnimations() {
+  // Collects frames "<prefix>-01", "<prefix>-02"... that exist
+  // as loaded textures, stopping at the first missing number.
+  collectFrames(prefix) {
     const frames = [];
 
-    for (let i = 1; i <= 8; i++) {
-      const frame = String(i).padStart(2, "0");
+    for (let i = 1; i <= MAX_FRAMES; i++) {
+      const key = `${prefix}-${String(i).padStart(2, "0")}`;
 
-      frames.push({
-        key: `drimo-run-${frame}`
+      if (!this.scene.textures.exists(key)) break;
+
+      frames.push({ key });
+    }
+
+    return frames;
+  }
+
+  createAnimations() {
+    const anims = this.scene.anims;
+
+    const runFrames = this.collectFrames("drimo-run");
+
+    this.jumpFrames = this.collectFrames("drimo-jump");
+    this.deathFrames = this.collectFrames("drimo-death");
+
+    if (!anims.exists("drimo-run")) {
+      anims.create({
+        key: "drimo-run",
+        frames: runFrames,
+        frameRate: 10,
+        repeat: -1
       });
     }
 
-    if (!this.scene.anims.exists("drimo-run")) {
-      this.scene.anims.create({
-        key: "drimo-run",
-        frames,
-        frameRate: 10,
-        repeat: -1
+    // Plays once and holds on the last frame
+    if (this.deathFrames.length > 0 && !anims.exists("drimo-death")) {
+      anims.create({
+        key: "drimo-death",
+        frames: this.deathFrames,
+        frameRate: this.deathFrames.length / DEATH_ANIM_SECONDS,
+        repeat: 0
       });
     }
   }
@@ -86,21 +109,6 @@ export default class Drimo {
     this.shadow.setDepth(9);
   }
 
-  createShield() {
-    this.shieldRing = this.scene.add.ellipse(
-      this.baseX,
-      this.groundY,
-      this.sprite.displayWidth * 1.15,
-      this.sprite.displayHeight * 1.1,
-      0x44ccff,
-      0.18
-    );
-
-    this.shieldRing.setStrokeStyle(4, 0x9eeaff, 0.9);
-    this.shieldRing.setDepth(11);
-    this.shieldRing.setVisible(false);
-  }
-
   createHitboxGraphics() {
     this.hitboxGraphics = this.scene.add.graphics();
     this.hitboxGraphics.setDepth(20);
@@ -119,33 +127,19 @@ export default class Drimo {
     return true;
   }
 
-  startDash() {
-    if (
-      !this.alive ||
-      this.dashTimer > 0 ||
-      this.dashCooldownTimer > 0
-    ) {
-      return false;
-    }
-
-    this.dashTimer = GAME_SETTINGS.dashDuration;
-    this.afterimageTimer = 0;
-
-    this.sprite.setTint(0x66ccff);
-
-    return true;
-  }
-
-  setShield(active) {
-    this.shieldActive = active;
-    this.shieldRing.setVisible(active);
-  }
-
   playDeath() {
     this.alive = false;
 
-    this.setShield(false);
+    if (this.deathFrames.length > 0) {
+      // Real death animation
+      this.sprite.clearTint();
+      this.sprite.anims.timeScale = 1;
+      this.sprite.play("drimo-death");
 
+      return;
+    }
+
+    // Fallback when no death frames were loaded
     this.sprite.setTint(0xff5555);
     this.sprite.anims.timeScale = 0.2;
 
@@ -157,34 +151,57 @@ export default class Drimo {
     });
   }
 
+  // Called when the game over screen appears. Leaves the death
+  // animation alone so it can finish on its last frame.
+  stopAnimation() {
+    if (this.deathFrames.length > 0) return;
+
+    this.sprite.anims.stop();
+  }
+
+  // =================================
+  // JUMP ANIMATION
+  // The jump frames follow the jump progress, so the pose always
+  // matches the height no matter how fast the world is moving.
+  // =================================
+
+  showJumpFrame(progress) {
+    if (!this.alive || this.jumpFrames.length === 0) return;
+
+    if (!this.jumpAnimActive) {
+      this.sprite.anims.stop();
+      this.jumpAnimActive = true;
+    }
+
+    const index = Math.min(
+      this.jumpFrames.length - 1,
+      Math.floor(progress * this.jumpFrames.length)
+    );
+
+    this.sprite.setTexture(this.jumpFrames[index].key);
+  }
+
+  endJumpAnimation() {
+    if (!this.jumpAnimActive) return;
+
+    this.jumpAnimActive = false;
+
+    if (this.alive) {
+      this.sprite.play("drimo-run");
+    }
+  }
+
   // =================================
   // STATE QUERIES
   // =================================
-
-  isDashing() {
-    return this.dashTimer > 0;
-  }
 
   isAirborne() {
     return this.jumping && this.jumpOffset > 20;
   }
 
-  // Dashing or airborne = potholes can't hurt the player
-  isInvulnerable() {
-    return this.isDashing() || this.isAirborne();
-  }
-
-  // 0 = empty (dashing / just finished), 1 = ready
-  getDashCharge() {
-    if (this.dashTimer > 0) return 0;
-    if (this.dashCooldownTimer <= 0) return 1;
-
-    return 1 - this.dashCooldownTimer / GAME_SETTINGS.dashCooldown;
-  }
-
-  // World speed multiplier contributed by the dash (eased)
-  getDashBoost() {
-    return this.dashBoost;
+  // How high Drimo is above the ground right now (pixels)
+  getJumpOffset() {
+    return this.jumpOffset;
   }
 
   getCenter() {
@@ -205,8 +222,6 @@ export default class Drimo {
     worldMultiplier = 1,
     controlsEnabled = true
   ) {
-    this.fxTime += deltaSeconds;
-
     // LANE MOVEMENT
     if (controlsEnabled) {
       const up = keys.up.isDown || cursors.up.isDown;
@@ -246,51 +261,18 @@ export default class Drimo {
         this.jumping = false;
         this.jumpTime = 0;
         this.jumpOffset = 0;
+
+        this.endJumpAnimation();
       } else {
         this.jumpOffset =
           4 * GAME_SETTINGS.jumpHeight * t * (1 - t);
+
+        this.showJumpFrame(t);
       }
     }
-
-    // DASH TIMERS
-    if (this.dashTimer > 0) {
-      this.dashTimer -= deltaSeconds;
-      this.afterimageTimer -= deltaSeconds;
-
-      if (this.afterimageTimer <= 0) {
-        this.spawnAfterimage();
-        this.afterimageTimer = 0.04;
-      }
-
-      if (this.dashTimer <= 0) {
-        this.dashTimer = 0;
-        this.dashCooldownTimer = GAME_SETTINGS.dashCooldown;
-
-        if (this.alive) {
-          this.sprite.clearTint();
-        }
-      }
-    } else if (this.dashCooldownTimer > 0) {
-      this.dashCooldownTimer = Math.max(
-        0,
-        this.dashCooldownTimer - deltaSeconds
-      );
-    }
-
-    // EASED DASH EFFECTS
-    const ease = Math.min(1, deltaSeconds * 12);
-
-    const targetBoost =
-      this.dashTimer > 0 ? GAME_SETTINGS.dashSpeedBoost : 1;
-
-    this.dashBoost += (targetBoost - this.dashBoost) * ease;
-
-    const targetOffset = this.dashTimer > 0 ? 70 : 0;
-
-    this.dashOffsetX += (targetOffset - this.dashOffsetX) * ease;
 
     // APPLY POSITION
-    this.sprite.x = this.baseX + this.dashOffsetX;
+    this.sprite.x = this.baseX;
     this.sprite.y = this.groundY - this.jumpOffset;
 
     // SHADOW (stays on the ground, shrinks while airborne)
@@ -300,41 +282,7 @@ export default class Drimo {
     this.shadow.setScale(1 - 0.45 * air);
     this.shadow.setAlpha(0.35 * (1 - 0.5 * air));
 
-    // SHIELD RING
-    if (this.shieldActive) {
-      this.shieldRing.setPosition(
-        this.sprite.x,
-        this.sprite.y - this.sprite.displayHeight / 2
-      );
-
-      this.shieldRing.setScale(
-        1 + 0.04 * Math.sin(this.fxTime * 6)
-      );
-    }
-
     this.drawHitboxes();
-  }
-
-  spawnAfterimage() {
-    const ghost = this.scene.add.image(
-      this.sprite.x,
-      this.sprite.y,
-      this.sprite.texture.key
-    );
-
-    ghost.setOrigin(0.5, 1);
-    ghost.setScale(this.sprite.scaleX, this.sprite.scaleY);
-    ghost.setDepth(9);
-    ghost.setTint(0x66ccff);
-    ghost.setAlpha(0.5);
-
-    this.scene.tweens.add({
-      targets: ghost,
-      alpha: 0,
-      x: ghost.x - 60,
-      duration: 260,
-      onComplete: () => ghost.destroy()
-    });
   }
 
   // =================================
@@ -419,7 +367,6 @@ export default class Drimo {
   destroy() {
     this.sprite.destroy();
     this.shadow.destroy();
-    this.shieldRing.destroy();
     this.hitboxGraphics.destroy();
   }
 }

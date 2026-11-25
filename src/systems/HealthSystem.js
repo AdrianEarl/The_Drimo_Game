@@ -42,13 +42,6 @@ export default class HealthSystem {
       return false;
     }
 
-    // A shield absorbs the hit completely
-    const powerUps = this.scene.powerUpSystem;
-
-    if (powerUps && powerUps.consumeShield()) {
-      return false;
-    }
-
     this.health = Math.max(
       0,
       this.health - this.damagePerHit
