@@ -9,15 +9,34 @@ import ObstacleSystem from "../systems/ObstacleSystem";
 import HealthSystem from "../systems/HealthSystem";
 import ScoreSystem from "../systems/ScoreSystem";
 import CoinSystem from "../systems/CoinSystem";
+import PowerUpSystem from "../systems/PowerUpSystem";
 
 import HUD from "../ui/HUD";
 import GameOverScreen from "../ui/GameOverScreen";
+import MenuScreens from "../ui/MenuScreens";
+
+const formatMultiplier = (value) =>
+  Number.isInteger(value) ? String(value) : value.toFixed(1);
+
+// Rotating milestone events (every GAME_SETTINGS.milestoneEvery meters)
+const MILESTONE_EVENTS = [
+  { id: "surge", title: "SPEED SURGE!" },
+  { id: "rush", title: "OBSTACLE RUSH!" },
+  { id: "frenzy", title: "COIN FRENZY!" }
+];
 
 export default class GameScene extends Phaser.Scene {
   constructor() {
     super("GameScene");
 
     this.gameOver = false;
+    this.dying = false;
+    this.state = "title";
+  }
+
+  // Receives { skipTitle: true } when restarting
+  init(data) {
+    this.skipTitle = !!(data && data.skipTitle);
   }
 
   // =================================
@@ -60,7 +79,12 @@ export default class GameScene extends Phaser.Scene {
   // =================================
 
   create() {
+    // Make sure a previous pause can never leak into a restart
+    this.resumeEngine();
+
     this.gameOver = false;
+    this.dying = false;
+    this.deathElapsed = 0;
 
     this.worldWidth = GAME_SETTINGS.width;
     this.worldHeight = GAME_SETTINGS.height;
@@ -68,7 +92,15 @@ export default class GameScene extends Phaser.Scene {
     // RESET DIFFICULTY WHEN GAME STARTS
     this.elapsedTime = 0;
     this.backgroundSpeed = GAME_SETTINGS.backgroundSpeed;
+    this.difficultyMultiplier = 1;
     this.speedMultiplier = 1;
+
+    // MILESTONE EVENT STATE
+    this.milestoneEvent = null;
+    this.lastMilestone = 0;
+    this.eventSpeedFactor = 1;
+    this.obstacleSpawnBoost = 1;
+    this.coinSpawnBoost = 1;
 
     this.camera = this.cameras.main;
 
@@ -85,6 +117,15 @@ export default class GameScene extends Phaser.Scene {
     this.createPlayer();
     this.createInterface();
     this.createSystems();
+    this.createSpeedLines();
+
+    this.menus = new MenuScreens(this);
+
+    if (this.skipTitle) {
+      this.beginCountdown();
+    } else {
+      this.enterTitle();
+    }
   }
 
   // =================================
@@ -133,10 +174,9 @@ export default class GameScene extends Phaser.Scene {
   // 04. UPDATE BACKGROUND
   // =================================
 
-  updateBackground(deltaSeconds) {
+  updateBackground(deltaSeconds, speed = this.backgroundSpeed) {
     for (const background of this.backgrounds) {
-      background.worldX -=
-        this.backgroundSpeed * deltaSeconds;
+      background.worldX -= speed * deltaSeconds;
     }
 
     let rightmostX = Math.max(
@@ -166,8 +206,8 @@ export default class GameScene extends Phaser.Scene {
     // TRACK HOW LONG THE PLAYER HAS SURVIVED
     this.elapsedTime += deltaSeconds;
 
-    // CALCULATE BACKGROUND SPEED
-    this.backgroundSpeed = Math.min(
+    // BASE DIFFICULTY SPEED
+    const difficultySpeed = Math.min(
       GAME_SETTINGS.backgroundSpeed +
       this.elapsedTime *
       GAME_SETTINGS.backgroundSpeedIncrease,
@@ -175,25 +215,33 @@ export default class GameScene extends Phaser.Scene {
       GAME_SETTINGS.backgroundSpeedMax
     );
 
-    // CALCULATE SPEED MULTIPLIER
-    // (also read by the obstacle/coin spawn timers)
-    this.speedMultiplier =
-      this.backgroundSpeed /
-      GAME_SETTINGS.backgroundSpeed;
+    this.difficultyMultiplier =
+      difficultySpeed / GAME_SETTINGS.backgroundSpeed;
 
-    // ACCELERATE OBSTACLES
-    if (this.obstacleSystem) {
-      this.obstacleSystem.speed =
-        GAME_SETTINGS.obstacleSpeed *
-        this.speedMultiplier;
-    }
+    // COMBINE EVERY SPEED MODIFIER:
+    // difficulty x dash x slow-mo power-up x milestone surge
+    const combined =
+      this.difficultyMultiplier *
+      this.drimo.getDashBoost() *
+      this.powerUpSystem.getSlowFactor() *
+      this.eventSpeedFactor;
 
-    // ACCELERATE COINS
-    if (this.coinSystem) {
-      this.coinSystem.speed =
-        GAME_SETTINGS.obstacleSpeed *
-        this.speedMultiplier;
-    }
+    // Effective world speed. The spawn timers read this too,
+    // so the pixel spacing between objects stays constant.
+    this.speedMultiplier = Math.min(
+      combined,
+      GAME_SETTINGS.maxWorldMultiplier
+    );
+
+    this.backgroundSpeed =
+      GAME_SETTINGS.backgroundSpeed * this.speedMultiplier;
+
+    const objectSpeed =
+      GAME_SETTINGS.obstacleSpeed * this.speedMultiplier;
+
+    this.obstacleSystem.speed = objectSpeed;
+    this.coinSystem.speed = objectSpeed;
+    this.powerUpSystem.speed = objectSpeed;
   }
 
   // =================================
@@ -232,21 +280,49 @@ export default class GameScene extends Phaser.Scene {
   // =================================
 
   createControls() {
+    const KeyCodes = Phaser.Input.Keyboard.KeyCodes;
+
     const keyMap = {
-      up: Phaser.Input.Keyboard.KeyCodes.W,
-      down: Phaser.Input.Keyboard.KeyCodes.S,
-      restart: Phaser.Input.Keyboard.KeyCodes.R
+      up: KeyCodes.W,
+      down: KeyCodes.S,
+      dash: KeyCodes.SPACE,
+      jump: KeyCodes.J,
+      jumpAlt: KeyCodes.SHIFT,
+      pause: KeyCodes.P,
+      escape: KeyCodes.ESC,
+      start: KeyCodes.ENTER,
+      restart: KeyCodes.R
     };
 
     // Test keys exist only in debug mode
     if (GAME_SETTINGS.debug) {
-      keyMap.damage = Phaser.Input.Keyboard.KeyCodes.H;
-      keyMap.collect = Phaser.Input.Keyboard.KeyCodes.C;
+      keyMap.damage = KeyCodes.H;
+      keyMap.collect = KeyCodes.C;
     }
 
     this.keys = this.input.keyboard.addKeys(keyMap);
 
     this.cursors = this.input.keyboard.createCursorKeys();
+
+    this.flushKeys();
+  }
+
+  // Consume any "just pressed" flags so an old key press
+  // can't fire the moment a new state begins
+  flushKeys() {
+    const names = [
+      "dash",
+      "jump",
+      "jumpAlt",
+      "pause",
+      "escape",
+      "start",
+      "restart"
+    ];
+
+    for (const name of names) {
+      Phaser.Input.Keyboard.JustDown(this.keys[name]);
+    }
   }
 
   // =================================
@@ -295,8 +371,11 @@ export default class GameScene extends Phaser.Scene {
 
     this.coinSystem = new CoinSystem(
       this,
-      () => this.scoreSystem.collectCoin()
+      (x, y) => this.handleCoinCollected(x, y),
+      (result, x, y) => this.handleGroupResolved(result, x, y)
     );
+
+    this.powerUpSystem = new PowerUpSystem(this);
 
     // INITIAL SPEEDS
     this.obstacleSystem.speed =
@@ -304,79 +383,474 @@ export default class GameScene extends Phaser.Scene {
 
     this.coinSystem.speed =
       GAME_SETTINGS.obstacleSpeed;
+
+    this.powerUpSystem.speed =
+      GAME_SETTINGS.obstacleSpeed;
   }
 
   // =================================
-  // 11. GAME OVER
+  // 11. COIN / COMBO CALLBACKS
   // =================================
 
+  handleCoinCollected(x, y) {
+    const points = this.scoreSystem.collectCoin();
+
+    this.hud.spawnFloatingText(x, y - 20, `+${points}`);
+  }
+
+  handleGroupResolved(result, x, y) {
+    if (this.dying || this.gameOver) return;
+
+    if (result === "complete") {
+      const multiplier = this.scoreSystem.completeGroup();
+
+      this.hud.spawnFloatingText(
+        x,
+        y - 70,
+        `PERFECT! x${formatMultiplier(multiplier)}`,
+        "#7dffb0",
+        40
+      );
+    } else if (result === "missed") {
+      if (GAME_SETTINGS.comboBreakOnMiss) {
+        this.scoreSystem.breakCombo();
+      }
+    }
+  }
+
+  // =================================
+  // 12. SPEED LINES
+  // =================================
+
+  createSpeedLines() {
+    this.speedLines = [];
+    this.speedLineIntensity = 0;
+
+    for (let i = 0; i < 18; i++) {
+      const line = this.add.rectangle(
+        Phaser.Math.Between(0, this.worldWidth),
+        Phaser.Math.Between(0, this.worldHeight),
+        Phaser.Math.Between(220, 520),
+        3,
+        0xffffff
+      );
+
+      line.setDepth(40);
+      line.setVisible(false);
+      line.baseAlpha = Phaser.Math.FloatBetween(0.15, 0.4);
+      line.setAlpha(0);
+
+      this.speedLines.push(line);
+    }
+  }
+
+  updateSpeedLines(deltaSeconds) {
+    // Fade in once the world is clearly faster than normal
+    const target = Phaser.Math.Clamp(
+      (this.speedMultiplier - 1.2) / 0.9,
+      0,
+      1
+    );
+
+    this.speedLineIntensity +=
+      (target - this.speedLineIntensity) *
+      Math.min(1, deltaSeconds * 3);
+
+    const visible = this.speedLineIntensity > 0.01;
+
+    for (const line of this.speedLines) {
+      line.setVisible(visible);
+
+      if (!visible) continue;
+
+      line.setAlpha(this.speedLineIntensity * line.baseAlpha);
+
+      line.x -= this.backgroundSpeed * 2.4 * deltaSeconds;
+
+      if (line.x + line.width / 2 < 0) {
+        line.x = this.worldWidth + line.width / 2 +
+          Phaser.Math.Between(0, 400);
+        line.y = Phaser.Math.Between(0, this.worldHeight);
+      }
+    }
+  }
+
+  // =================================
+  // 13. MILESTONES
+  // =================================
+
+  checkMilestones() {
+    const step = GAME_SETTINGS.milestoneEvery;
+
+    const reached = Math.floor(
+      this.scoreSystem.distance / step
+    );
+
+    if (reached > this.lastMilestone) {
+      this.lastMilestone = reached;
+      this.triggerMilestone(reached * step, reached);
+    }
+  }
+
+  triggerMilestone(meters, index) {
+    const event =
+      MILESTONE_EVENTS[(index - 1) % MILESTONE_EVENTS.length];
+
+    this.milestoneEvent = {
+      id: event.id,
+      remaining: GAME_SETTINGS.eventDuration
+    };
+
+    this.scoreSystem.addBonus(GAME_SETTINGS.milestoneBonus);
+
+    this.hud.showBanner(
+      `${meters} M`,
+      `${event.title}  +${GAME_SETTINGS.milestoneBonus}`
+    );
+  }
+
+  updateMilestoneEvent(deltaSeconds) {
+    // Reset every frame, then re-apply the active event
+    this.eventSpeedFactor = 1;
+    this.obstacleSpawnBoost = 1;
+    this.coinSpawnBoost = 1;
+
+    if (!this.milestoneEvent) return;
+
+    this.milestoneEvent.remaining -= deltaSeconds;
+
+    if (this.milestoneEvent.remaining <= 0) {
+      this.milestoneEvent = null;
+      return;
+    }
+
+    switch (this.milestoneEvent.id) {
+      case "surge":
+        this.eventSpeedFactor = GAME_SETTINGS.surgeSpeedFactor;
+        break;
+
+      case "rush":
+        this.obstacleSpawnBoost = GAME_SETTINGS.rushSpawnBoost;
+        break;
+
+      case "frenzy":
+        this.coinSpawnBoost = GAME_SETTINGS.frenzyCoinBoost;
+        break;
+
+      default:
+        break;
+    }
+  }
+
+  // =================================
+  // 14. GAME FLOW (title / countdown / pause)
+  // =================================
+
+  enterTitle() {
+    this.state = "title";
+    this.menus.showTitle();
+  }
+
+  beginCountdown() {
+    this.state = "countdown";
+    this.countdownTime = 3;
+    this.lastCountdownNumber = null;
+
+    this.menus.hideTitle();
+    this.flushKeys();
+  }
+
+  pauseGame() {
+    this.state = "paused";
+
+    this.time.paused = true;
+    this.tweens.pauseAll();
+    this.anims.pauseAll();
+
+    this.menus.showPause();
+  }
+
+  resumeGame() {
+    this.menus.hidePause();
+
+    this.resumeEngine();
+
+    this.state = "playing";
+  }
+
+  resumeEngine() {
+    this.time.paused = false;
+    this.tweens.resumeAll();
+    this.anims.resumeAll();
+  }
+
+  restartGame() {
+    this.resumeEngine();
+
+    this.scene.restart({ skipTitle: true });
+  }
+
+  // =================================
+  // 15. DEATH / GAME OVER
+  // =================================
+
+  // Called by HealthSystem when health reaches 0.
+  // Starts a slow-motion death before the game over screen.
   endGame() {
+    if (this.dying || this.gameOver) return;
+
+    this.dying = true;
+    this.state = "dying";
+    this.deathElapsed = 0;
+
+    this.healthSystem.destroy();
+    this.drimo.playDeath();
+
+    this.cameras.main.shake(450, 0.02, true);
+  }
+
+  finishGame() {
     if (this.gameOver) return;
 
     this.gameOver = true;
+    this.state = "gameover";
 
     const player = this.drimo.getSprite();
 
     if (player && player.active) {
       player.anims.stop();
-      player.setAlpha(1);
     }
 
-    this.healthSystem.destroy();
-
     this.obstacleSystem.clear();
-
     this.coinSystem.clear();
+    this.powerUpSystem.clear();
 
-    this.gameOverScreen.show(
-      this.scoreSystem.score
-    );
+    const result = this.scoreSystem.submitFinalScore();
+
+    // Don't let an old R press restart instantly
+    this.flushKeys();
+
+    this.gameOverScreen.show({
+      score: this.scoreSystem.score,
+      best: result.best,
+      isNewBest: result.isNewBest,
+      distance: this.scoreSystem.distance,
+      coins: this.scoreSystem.coins,
+      maxMultiplier: this.scoreSystem.maxMultiplier,
+      time: this.elapsedTime,
+      hits: this.scoreSystem.hits
+    });
   }
 
   // =================================
-  // 12. GAME LOOP
+  // 16. GAME LOOP
   // =================================
 
   update(time, delta) {
-    if (this.gameOver) {
-      if (
-        Phaser.Input.Keyboard.JustDown(
-          this.keys.restart
-        )
-      ) {
-        this.scene.restart();
-      }
-
-      return;
-    }
-
     // Clamp frame time so lag spikes / tab switches
     // can't teleport objects through the player
     const deltaSeconds =
       Math.min(delta, GAME_SETTINGS.maxDeltaMs) / 1000;
 
-    // UPDATE DIFFICULTY
+    switch (this.state) {
+      case "title":
+        this.updateTitle(deltaSeconds);
+        break;
+
+      case "countdown":
+        this.updateCountdown(deltaSeconds);
+        break;
+
+      case "playing":
+        this.updatePlaying(deltaSeconds);
+        break;
+
+      case "paused":
+        this.updatePaused();
+        break;
+
+      case "dying":
+        this.updateDying(deltaSeconds);
+        break;
+
+      case "gameover":
+        this.updateGameOver();
+        break;
+
+      default:
+        break;
+    }
+  }
+
+  idleSpeed() {
+    return (
+      GAME_SETTINGS.backgroundSpeed *
+      GAME_SETTINGS.idleScrollFactor
+    );
+  }
+
+  updateTitle(deltaSeconds) {
+    this.updateBackground(deltaSeconds, this.idleSpeed());
+
+    if (
+      Phaser.Input.Keyboard.JustDown(this.keys.dash) ||
+      Phaser.Input.Keyboard.JustDown(this.keys.start)
+    ) {
+      this.beginCountdown();
+    }
+  }
+
+  updateCountdown(deltaSeconds) {
+    this.updateBackground(deltaSeconds, this.idleSpeed());
+
+    this.countdownTime -= deltaSeconds;
+
+    if (this.countdownTime > 0) {
+      const number = Math.ceil(this.countdownTime);
+
+      if (number !== this.lastCountdownNumber) {
+        this.lastCountdownNumber = number;
+        this.menus.showCountdown(String(number));
+      }
+
+      return;
+    }
+
+    this.menus.showCountdown("GO!", true);
+
+    // Presses made during the countdown must not trigger actions
+    this.flushKeys();
+
+    this.state = "playing";
+  }
+
+  updatePaused() {
+    if (
+      Phaser.Input.Keyboard.JustDown(this.keys.pause) ||
+      Phaser.Input.Keyboard.JustDown(this.keys.escape)
+    ) {
+      this.resumeGame();
+      return;
+    }
+
+    if (Phaser.Input.Keyboard.JustDown(this.keys.restart)) {
+      this.restartGame();
+    }
+  }
+
+  updateGameOver() {
+    if (Phaser.Input.Keyboard.JustDown(this.keys.restart)) {
+      this.restartGame();
+    }
+  }
+
+  // Slow-motion death: the world keeps moving, but slower and
+  // slower, with no collisions, pickups or spawns.
+  updateDying(realDelta) {
+    this.deathElapsed += realDelta;
+
+    const ramp = Phaser.Math.Clamp(
+      this.deathElapsed / GAME_SETTINGS.deathSlowMoRamp,
+      0,
+      1
+    );
+
+    const scale = Phaser.Math.Linear(
+      1,
+      GAME_SETTINGS.deathSlowMoScale,
+      ramp
+    );
+
+    const deltaSeconds = realDelta * scale;
+
+    this.updateBackground(deltaSeconds);
+    this.updateSpeedLines(deltaSeconds);
+
+    this.drimo.update(
+      deltaSeconds,
+      this.keys,
+      this.cursors,
+      1,
+      false
+    );
+
+    this.obstacleSystem.update(deltaSeconds);
+    this.coinSystem.update(deltaSeconds);
+
+    if (this.deathElapsed >= GAME_SETTINGS.deathSlowMoDuration) {
+      this.finishGame();
+    }
+  }
+
+  updatePlaying(deltaSeconds) {
+    // PAUSE
+    if (
+      Phaser.Input.Keyboard.JustDown(this.keys.pause) ||
+      Phaser.Input.Keyboard.JustDown(this.keys.escape)
+    ) {
+      this.pauseGame();
+      return;
+    }
+
+    // ACTIONS
+    if (Phaser.Input.Keyboard.JustDown(this.keys.dash)) {
+      this.drimo.startDash();
+    }
+
+    if (
+      Phaser.Input.Keyboard.JustDown(this.keys.jump) ||
+      Phaser.Input.Keyboard.JustDown(this.keys.jumpAlt)
+    ) {
+      this.drimo.startJump();
+    }
+
+    // EVENTS + DIFFICULTY
+    this.updateMilestoneEvent(deltaSeconds);
     this.updateDifficulty(deltaSeconds);
 
-    // BACKGROUND
+    // DISTANCE + MILESTONES
+    const meters =
+      (this.backgroundSpeed * deltaSeconds) /
+      GAME_SETTINGS.pixelsPerMeter;
+
+    this.scoreSystem.addDistance(meters);
+    this.checkMilestones();
+
+    // BACKGROUND + SPEED LINES
     this.updateBackground(deltaSeconds);
+    this.updateSpeedLines(deltaSeconds);
 
     // PLAYER
     this.drimo.update(
       deltaSeconds,
       this.keys,
-      this.cursors
+      this.cursors,
+      this.speedMultiplier,
+      true
     );
 
-    // OBSTACLES (may end the game)
+    // OBSTACLES (may start the death sequence)
     this.obstacleSystem.update(deltaSeconds);
 
     // Kept on purpose: also stops coins from spawning
-    // in the same frame the game ended
-    if (this.gameOver) return;
+    // in the same frame the player died
+    if (this.dying) return;
 
     // COINS
     this.coinSystem.update(deltaSeconds);
+
+    // POWER-UPS
+    this.powerUpSystem.update(deltaSeconds);
+
+    // HUD
+    this.hud.updateDash(
+      this.drimo.getDashCharge(),
+      this.drimo.isDashing()
+    );
+
+    this.hud.updatePowerUps(
+      this.powerUpSystem.getActiveList()
+    );
 
     // DEBUG TEST KEYS
     if (GAME_SETTINGS.debug) {
