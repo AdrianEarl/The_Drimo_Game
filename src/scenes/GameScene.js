@@ -11,8 +11,8 @@ import ScoreSystem from "../systems/ScoreSystem";
 import CoinSystem from "../systems/CoinSystem";
 import PowerUpSystem from "../systems/PowerUpSystem";
 import BackgroundSystem from "../systems/BackgroundSystem";
-import BirdSystem from "../systems/BirdSystem.js";
-import SoundSystem from "../systems/SoundSystem.js/index.js";
+import BirdSystem from "../systems/BirdSystem";
+import SoundSystem from "../systems/SoundSystem";
 
 import HUD from "../ui/HUD";
 import GameOverScreen from "../ui/GameOverScreen";
