@@ -17,6 +17,7 @@ import SoundSystem from "../systems/SoundSystem";
 import HUD from "../ui/HUD";
 import GameOverScreen from "../ui/GameOverScreen";
 import MenuScreens from "../ui/MenuScreens";
+import TouchControls from "../ui/TouchControls";
 
 // =================================
 // ASSET SETTINGS (edit these to match your files)
@@ -278,6 +279,9 @@ export default class GameScene extends Phaser.Scene {
   createControls() {
     const KeyCodes = Phaser.Input.Keyboard.KeyCodes;
 
+    // On-screen buttons for phones (does nothing on a computer)
+    this.touch = new TouchControls(this);
+
     const keyMap = {
       up: KeyCodes.W,
       down: KeyCodes.S,
@@ -319,6 +323,13 @@ export default class GameScene extends Phaser.Scene {
     for (const name of names) {
       Phaser.Input.Keyboard.JustDown(this.keys[name]);
     }
+
+    if (this.touch) this.touch.flush();
+  }
+
+  // True when a phone is held upright (the game needs landscape)
+  isPortrait() {
+    return window.innerHeight > window.innerWidth;
   }
 
   // =================================
@@ -571,6 +582,7 @@ export default class GameScene extends Phaser.Scene {
 
     // No score / health HUD behind the title screen
     this.hud.setVisible(false);
+    this.touch.setVisible(false);
   }
 
   beginCountdown() {
@@ -582,10 +594,13 @@ export default class GameScene extends Phaser.Scene {
     this.flushKeys();
 
     this.hud.setVisible(true);
+    this.touch.setVisible(true);
   }
 
   pauseGame() {
     this.state = "paused";
+
+    this.touch.flush();
 
     this.time.paused = true;
     this.tweens.pauseAll();
@@ -597,6 +612,8 @@ export default class GameScene extends Phaser.Scene {
 
   resumeGame() {
     this.menus.hidePause();
+
+    this.touch.flush();
 
     this.resumeEngine();
 
@@ -643,6 +660,11 @@ export default class GameScene extends Phaser.Scene {
 
     this.gameOver = true;
     this.state = "gameover";
+
+    // Taps are ignored briefly so a jump tap does not skip the screen
+    this.gameOverAt = this.time.now;
+
+    this.touch.setVisible(false);
 
     this.sfx.play("gameover");
 
@@ -720,9 +742,12 @@ export default class GameScene extends Phaser.Scene {
   updateTitle(deltaSeconds) {
     this.updateBackground(deltaSeconds, this.idleSpeed());
 
+    const tapped = this.touch.consumeTap();
+
     if (
       Phaser.Input.Keyboard.JustDown(this.keys.jump) ||
-      Phaser.Input.Keyboard.JustDown(this.keys.start)
+      Phaser.Input.Keyboard.JustDown(this.keys.start) ||
+      tapped
     ) {
       this.beginCountdown();
     }
@@ -767,11 +792,30 @@ export default class GameScene extends Phaser.Scene {
 
     if (Phaser.Input.Keyboard.JustDown(this.keys.restart)) {
       this.restartGame();
+      return;
+    }
+
+    // TOUCH: tap the restart button to restart, anywhere else to resume
+    const tap = this.touch.consumeTap();
+
+    if (tap) {
+      if (TouchControls.inRestartZone(tap)) {
+        this.restartGame();
+      } else {
+        this.resumeGame();
+      }
     }
   }
 
   updateGameOver() {
     if (Phaser.Input.Keyboard.JustDown(this.keys.restart)) {
+      this.restartGame();
+      return;
+    }
+
+    const tap = this.touch.consumeTap();
+
+    if (tap && this.time.now - this.gameOverAt > 800) {
       this.restartGame();
     }
   }
@@ -815,10 +859,20 @@ export default class GameScene extends Phaser.Scene {
   }
 
   updatePlaying(deltaSeconds) {
+    // TOUCH BUTTONS (held state for this frame)
+    this.touch.update();
+
+    // PHONE HELD UPRIGHT: pause until it is turned sideways
+    if (this.touch.enabled && this.isPortrait()) {
+      this.pauseGame();
+      return;
+    }
+
     // PAUSE
     if (
       Phaser.Input.Keyboard.JustDown(this.keys.pause) ||
-      Phaser.Input.Keyboard.JustDown(this.keys.escape)
+      Phaser.Input.Keyboard.JustDown(this.keys.escape) ||
+      this.touch.consumePause()
     ) {
       this.pauseGame();
       return;
@@ -829,7 +883,8 @@ export default class GameScene extends Phaser.Scene {
     const jumpPressed = [
       Phaser.Input.Keyboard.JustDown(this.keys.jump),
       Phaser.Input.Keyboard.JustDown(this.keys.jumpAlt),
-      Phaser.Input.Keyboard.JustDown(this.keys.jumpAlt2)
+      Phaser.Input.Keyboard.JustDown(this.keys.jumpAlt2),
+      this.touch.consumeJump()
     ].some(Boolean);
 
     if (jumpPressed) {
@@ -863,7 +918,8 @@ export default class GameScene extends Phaser.Scene {
       this.keys,
       this.cursors,
       this.speedMultiplier,
-      true
+      true,
+      this.touch
     );
 
     // OBSTACLES (may start the death sequence)

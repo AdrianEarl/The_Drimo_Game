@@ -124,7 +124,9 @@ export default class GameOverScreen {
     const restartMessage = scene.add.text(
       960,
       850,
-      "PRESS R TO RESTART",
+      scene.touch && scene.touch.enabled
+        ? "TAP TO RESTART"
+        : "PRESS R TO RESTART",
       {
         fontFamily: "Arial",
         fontSize: "34px",

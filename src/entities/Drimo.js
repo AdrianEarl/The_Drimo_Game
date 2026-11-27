@@ -8,6 +8,22 @@ const MAX_FRAMES = 40;
 // How long the death animation takes to play (seconds)
 const DEATH_ANIM_SECONDS = 0.9;
 
+// While jumping, Drimo cannot change lanes (W / S / up / down /
+// the touch buttons do nothing until he lands). Set to false to
+// allow moving in the air again.
+const LOCK_LANES_WHILE_JUMPING = true;
+
+// JUMP ANIMATION TIMING
+// The first jump frame looks too much like standing, so this many
+// frames are skipped at the start of every jump.
+const JUMP_SKIP_FRAMES = 1;
+
+// How long each remaining frame stays on screen, relative to the
+// others (1 = normal). Frame 2 is now the first one shown, so a low
+// number there makes it a quick flick into the jump pose.
+// Frames without an entry use 1.
+const JUMP_FRAME_WEIGHTS = [0.35, 1, 1, 1];
+
 export default class Drimo {
   constructor(scene) {
     this.scene = scene;
@@ -25,6 +41,10 @@ export default class Drimo {
     // Frame lists (filled in createAnimations)
     this.jumpFrames = [];
     this.deathFrames = [];
+
+    // Jump frames to show, each with the jump progress (0-1) at
+    // which it ends (built by buildJumpSequence)
+    this.jumpSequence = [];
 
     this.createAnimations();
     this.createSprite();
@@ -56,6 +76,8 @@ export default class Drimo {
     this.jumpFrames = this.collectFrames("drimo-jump");
     this.deathFrames = this.collectFrames("drimo-death");
 
+    this.buildJumpSequence();
+
     if (!anims.exists("drimo-run")) {
       anims.create({
         key: "drimo-run",
@@ -74,6 +96,30 @@ export default class Drimo {
         repeat: 0
       });
     }
+  }
+
+  // Works out which jump frames are shown and for how long
+  buildJumpSequence() {
+    const skip =
+      this.jumpFrames.length > JUMP_SKIP_FRAMES
+        ? JUMP_SKIP_FRAMES
+        : 0;
+
+    const frames = this.jumpFrames.slice(skip);
+
+    const weights = frames.map(
+      (_, i) => JUMP_FRAME_WEIGHTS[i] ?? 1
+    );
+
+    const total = weights.reduce((sum, w) => sum + w, 0);
+
+    let running = 0;
+
+    this.jumpSequence = frames.map((frame, i) => {
+      running += weights[i];
+
+      return { key: frame.key, end: running / total };
+    });
   }
 
   createSprite() {
@@ -190,19 +236,18 @@ export default class Drimo {
   // =================================
 
   showJumpFrame(progress) {
-    if (!this.alive || this.jumpFrames.length === 0) return;
+    if (!this.alive || this.jumpSequence.length === 0) return;
 
     if (!this.jumpAnimActive) {
       this.sprite.anims.stop();
       this.jumpAnimActive = true;
     }
 
-    const index = Math.min(
-      this.jumpFrames.length - 1,
-      Math.floor(progress * this.jumpFrames.length)
-    );
+    const step =
+      this.jumpSequence.find((entry) => progress < entry.end) ||
+      this.jumpSequence[this.jumpSequence.length - 1];
 
-    this.sprite.setTexture(this.jumpFrames[index].key);
+    this.sprite.setTexture(step.key);
 
     this.fitToRunSize();
   }
@@ -247,12 +292,18 @@ export default class Drimo {
     keys,
     cursors,
     worldMultiplier = 1,
-    controlsEnabled = true
+    controlsEnabled = true,
+    touch = null
   ) {
-    // LANE MOVEMENT
-    if (controlsEnabled) {
-      const up = keys.up.isDown || cursors.up.isDown;
-      const down = keys.down.isDown || cursors.down.isDown;
+    // LANE MOVEMENT (locked while jumping, if enabled above)
+    if (
+      controlsEnabled &&
+      !(LOCK_LANES_WHILE_JUMPING && this.jumping)
+    ) {
+      const up =
+        keys.up.isDown || cursors.up.isDown || !!(touch && touch.up);
+      const down =
+        keys.down.isDown || cursors.down.isDown || !!(touch && touch.down);
 
       // Opposite keys cancel out
       const moveY = (down ? 1 : 0) - (up ? 1 : 0);

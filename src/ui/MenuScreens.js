@@ -11,6 +11,9 @@ export default class MenuScreens {
   constructor(scene) {
     this.scene = scene;
 
+    // Phones get "TAP" wording instead of key names
+    this.touch = !!(scene.touch && scene.touch.enabled);
+
     this.titleTween = null;
 
     this.createTitle();
@@ -67,7 +70,7 @@ export default class MenuScreens {
     this.titlePrompt = scene.add.text(
       960,
       560,
-      "PRESS SPACE TO START",
+      this.touch ? "TAP TO START" : "PRESS SPACE TO START",
       {
         fontFamily: "Arial",
         fontSize: "54px",
@@ -81,11 +84,18 @@ export default class MenuScreens {
     const controls = scene.add.text(
       960,
       760,
-      [
-        "W / S  or  ↑ / ↓   -   MOVE",
-        "SPACE  (or  J  /  SHIFT)   -   JUMP over obstacles",
-        "P  or  ESC   -   PAUSE"
-      ].join("\n"),
+      (this.touch
+        ? [
+            "UP / DOWN buttons   -   MOVE",
+            "TAP the right side   -   JUMP over obstacles",
+            "Top button   -   PAUSE"
+          ]
+        : [
+            "W / S  or  ↑ / ↓   -   MOVE",
+            "SPACE  (or  J  /  SHIFT)   -   JUMP over obstacles",
+            "P  or  ESC   -   PAUSE"
+          ]
+      ).join("\n"),
       {
         fontFamily: "Arial",
         fontSize: "28px",
@@ -188,7 +198,7 @@ export default class MenuScreens {
     const resume = scene.add.text(
       960,
       540,
-      "PRESS P OR ESC TO RESUME",
+      this.touch ? "TAP TO RESUME" : "PRESS P OR ESC TO RESUME",
       {
         fontFamily: "Arial",
         fontSize: "38px",
@@ -197,14 +207,16 @@ export default class MenuScreens {
       }
     ).setOrigin(0.5);
 
+    // On phones this is a button (the tap zone is in TouchControls.js)
     const restart = scene.add.text(
       960,
-      610,
-      "PRESS R TO RESTART",
+      this.touch ? 650 : 610,
+      this.touch ? "TAP HERE TO RESTART" : "PRESS R TO RESTART",
       {
         fontFamily: "Arial",
-        fontSize: "30px",
-        color: "#ffd447"
+        fontSize: this.touch ? "42px" : "30px",
+        color: "#ffd447",
+        fontStyle: this.touch ? "bold" : "normal"
       }
     ).setOrigin(0.5);
 
