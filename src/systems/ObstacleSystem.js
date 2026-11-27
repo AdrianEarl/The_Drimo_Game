@@ -9,8 +9,13 @@ const OBSTACLE_PATH = "/assets/obstacles";
 // weight     : how often it is picked (higher = more common)
 // scale      : height relative to GAME_SETTINGS.obstacleHeight.
 //              The width follows the image's own proportions.
-// footprint  : how much of the BOTTOM of the image can hurt Drimo
-//              (1 = the whole image, 0.5 = the bottom half)
+// enlarge    : false = ignores GAME_SETTINGS.obstacleEnlarge (1.5x)
+// scenes     : backgrounds the obstacle may appear in. Ids come from
+//              BACKGROUND_STAGES: "night", "searoad", "baywalk", "nrscc"
+// footprint  : how much of the BOTTOM of the obstacle's shape can hurt
+//              Drimo (1 = the whole shape, 0.5 = the bottom half).
+//              Damage follows the real shape of the image (its
+//              opaque pixels), not a rectangle.
 // jump       : how high Drimo must be to clear it, as a fraction of
 //              GAME_SETTINGS.jumpHeight (higher = needs a bigger jump)
 // minTime    : seconds survived before it can appear
@@ -21,6 +26,8 @@ export const OBSTACLE_TYPES = [
     file: "Pothole-Obstacle.png",
     weight: 4,
     scale: 1,
+    enlarge: false,
+    scenes: ["night", "searoad", "nrscc"],
     footprint: 1,
     jump: 0.15,
     minTime: 0
@@ -31,6 +38,8 @@ export const OBSTACLE_TYPES = [
     file: "Puddle-Obstacle.png",
     weight: 3,
     scale: 1,
+    enlarge: false,
+    scenes: ["night", "baywalk"],
     footprint: 1,
     jump: 0.15,
     minTime: 0
@@ -41,6 +50,7 @@ export const OBSTACLE_TYPES = [
     file: "Cone-Obstacle.png",
     weight: 3,
     scale: 1,
+    scenes: ["night", "nrscc"],
     footprint: 0.5,
     jump: 0.3,
     minTime: 0
@@ -51,6 +61,7 @@ export const OBSTACLE_TYPES = [
     file: "Rock-Obstacle.png",
     weight: 3,
     scale: 1,
+    scenes: ["searoad", "baywalk"],
     footprint: 0.6,
     jump: 0.35,
     minTime: 5
@@ -61,6 +72,7 @@ export const OBSTACLE_TYPES = [
     file: "Log-Obstacle.png",
     weight: 2.5,
     scale: 1,
+    scenes: ["baywalk"],
     footprint: 0.6,
     jump: 0.4,
     minTime: 10
@@ -71,6 +83,7 @@ export const OBSTACLE_TYPES = [
     file: "Trash-Can-Obstacle.png",
     weight: 2,
     scale: 1.15,
+    scenes: ["night", "baywalk", "nrscc"],
     footprint: 0.5,
     jump: 0.45,
     minTime: 15
@@ -81,6 +94,7 @@ export const OBSTACLE_TYPES = [
     file: "Hurdle-Obstacle.png",
     weight: 2,
     scale: 1.1,
+    scenes: ["nrscc"],
     footprint: 0.4,
     jump: 0.5,
     minTime: 20
@@ -91,11 +105,24 @@ export const OBSTACLE_TYPES = [
     file: "Barrier-Obstacle.png",
     weight: 1.5,
     scale: 1.1,
+    scenes: ["night", "nrscc"],
     footprint: 0.5,
     jump: 0.55,
     minTime: 25
   }
 ];
+
+// Space kept around other spawned objects (pixels)
+const SPAWN_CLEARANCE = 24;
+
+// Same rectangle, grown on every side
+const padRect = (rect, pad) =>
+  new Phaser.Geom.Rectangle(
+    rect.x - pad,
+    rect.y - pad,
+    rect.width + pad * 2,
+    rect.height + pad * 2
+  );
 
 export default class ObstacleSystem {
   // Called from GameScene.preload()
@@ -145,11 +172,20 @@ export default class ObstacleSystem {
   pickType() {
     const elapsed = this.scene.elapsedTime || 0;
 
-    // Only types that are unlocked and whose image loaded
+    // Which background the new obstacle will appear on
+    const background = this.scene.backgroundSystem;
+
+    const stageId = background
+      ? background.getStageAt(GAME_SETTINGS.width + 100)
+      : null;
+
+    // Only types that are unlocked, whose image loaded, and that
+    // are allowed in this background
     const pool = OBSTACLE_TYPES.filter(
       type =>
         elapsed >= type.minTime &&
-        this.scene.textures.exists(type.key)
+        this.scene.textures.exists(type.key) &&
+        (!type.scenes || !stageId || type.scenes.includes(stageId))
     );
 
     if (pool.length === 0) {
@@ -201,6 +237,22 @@ export default class ObstacleSystem {
       }
     }
 
+    // Never spawn on top of a power-up
+    const powerUps = this.scene.powerUpSystem?.items || [];
+
+    for (const item of powerUps) {
+      if (!item || !item.sprite || !item.sprite.active) continue;
+
+      if (
+        Phaser.Geom.Intersects.RectangleToRectangle(
+          obstacleBounds,
+          padRect(item.sprite.getBounds(), SPAWN_CLEARANCE)
+        )
+      ) {
+        return false;
+      }
+    }
+
     return true;
   }
 
@@ -221,8 +273,21 @@ export default class ObstacleSystem {
       .get(type.key)
       .getSourceImage();
 
-    const height = this.height * type.scale;
+    const enlarge =
+      type.enlarge === false ? 1 : GAME_SETTINGS.obstacleEnlarge;
+
+    const height = this.height * type.scale * enlarge;
     const width = height * (source.width / source.height);
+
+    // Never spawn on the white space or next to a transition
+    const background = this.scene.backgroundSystem;
+
+    if (
+      background &&
+      background.isBlocked(GAME_SETTINGS.width + 100, width / 2)
+    ) {
+      return false;
+    }
 
     // Origin is bottom-center, so y is the bottom edge
     const minY = this.roadTop + height;
@@ -269,6 +334,12 @@ export default class ObstacleSystem {
       width,
       height,
       footprint: type.footprint,
+      // Shape of the image: which pixels can hurt Drimo
+      mask: this.collisionSystem.getMask(
+        this.scene,
+        type.key,
+        type.footprint
+      ),
       // Jump height (pixels) needed to clear this obstacle
       clearance: Math.max(20, type.jump * GAME_SETTINGS.jumpHeight)
     });
@@ -277,19 +348,8 @@ export default class ObstacleSystem {
   }
 
   // =================================
-  // 03. COLLISION BOUNDS
-  // Same rectangle the collision check uses
-  // =================================
-
-  getCollisionBounds(obstacleData) {
-    return this.collisionSystem.getObstacleBounds(
-      obstacleData.sprite,
-      obstacleData.footprint
-    );
-  }
-
-  // =================================
-  // 04. DRAW COLLISION BOX
+  // 03. DRAW COLLISION SHAPE (debug only)
+  // Draws the exact pixels that can hurt Drimo
   // =================================
 
   drawCollisionBox(obstacleData) {
@@ -299,15 +359,44 @@ export default class ObstacleSystem {
 
     if (!GAME_SETTINGS.showHitboxes) return;
 
-    const bounds = this.getCollisionBounds(obstacleData);
+    const { sprite, mask } = obstacleData;
 
-    graphics.lineStyle(3, 0xcc00ff, 1);
+    const texelW = sprite.displayWidth / mask.w;
+    const texelH = sprite.displayHeight / mask.h;
 
-    graphics.strokeRect(
-      bounds.x,
-      bounds.y,
-      bounds.width,
-      bounds.height
+    const left = sprite.x - sprite.displayWidth / 2;
+    const top = sprite.y - sprite.displayHeight;
+
+    graphics.fillStyle(0xcc00ff, 0.45);
+
+    for (const run of mask.runs) {
+      graphics.fillRect(
+        left + run.x0 * texelW,
+        top + run.y * texelH,
+        (run.x1 - run.x0 + 1) * texelW,
+        texelH + 0.5
+      );
+    }
+  }
+
+  // =================================
+  // 04. WHITE SPACE / TRANSITION ZONES
+  // An obstacle that is still off-screen but sits on the white
+  // space or next to a transition is removed.
+  // =================================
+
+  isInBlockedZone(obstacleData) {
+    const background = this.scene.backgroundSystem;
+
+    if (!background) return false;
+
+    const obstacle = obstacleData.sprite;
+
+    if (obstacle.x <= GAME_SETTINGS.width) return false;
+
+    return background.isBlocked(
+      obstacle.x,
+      obstacleData.width / 2
     );
   }
 
@@ -352,6 +441,14 @@ export default class ObstacleSystem {
 
       // Obstacles only scroll toward the player
       obstacle.x -= this.speed * deltaSeconds;
+
+      if (this.isInBlockedZone(obstacleData)) {
+        obstacle.destroy();
+        obstacleData.hitboxGraphics.destroy();
+
+        this.obstacles.splice(i, 1);
+        continue;
+      }
 
       this.drawCollisionBox(obstacleData);
 

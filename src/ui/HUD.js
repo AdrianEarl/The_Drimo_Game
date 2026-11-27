@@ -1,12 +1,64 @@
+import Phaser from "phaser";
+
+import { GAME_SETTINGS } from "../config/gameConfig";
+
 const formatMultiplier = (value) =>
   Number.isInteger(value) ? String(value) : value.toFixed(1);
 
 const POWERUP_ROWS = 1;
 const POWERUP_BAR_WIDTH = 160;
 
+// Power-up indicator column (top-right corner)
+const POWERUP_X = 1680;
+
+// HUD images (all optional: anything missing is skipped and the
+// plain HUD is used). Files live in public/assets/hud.
+//   hud-score : panel drawn behind SCORE / COINS / DISTANCE / COMBO
+//   hud-title : title card on the title screen (see MenuScreens.js)
+// Optional small icons, if you add them later: hud-coin (left of
+// COINS) and hud-magnet (power-up row).
+const HUD_PATH = "/assets/hud";
+
+export const HUD_ASSETS = [
+  { key: "hud-score", file: "Score-Hud.png" },
+  { key: "hud-title", file: "Title-Card.png" }
+];
+
+// Everything in the HUD (panel, texts, hearts) is multiplied by this.
+// 2 = twice the original size. Lower it (e.g. 1.5) if the HUD covers
+// too much of the playfield.
+const HUD_SCALE = 1.1;
+
+// The score panel sits in the top-LEFT corner, scaled to fit inside
+// this box (pixels, before HUD_SCALE). SCORE, COINS, DISTANCE, COMBO
+// and BEST are drawn inside it, with the hearts right under it.
+const SCORE_PANEL_BOX = { left: 20, top: 20, width: 520, height: 215 };
+
+// Heart texture size (the shape is drawn by code, no image needed)
+const HEART_W = 72;
+const HEART_H = 68;
+const HEART_TEXTURE_SCALE = 2;
+
+// Where the texts sit inside the panel, as fractions of its size
+const SCORE_LAYOUT = {
+  colLeft: 0.27,
+  colRight: 0.73,
+  rowTop: 0.25,
+  rowMiddle: 0.5,
+  rowBottom: 0.75
+};
+
 export default class HUD {
+  // Called from GameScene.preload()
+  static preload(scene) {
+    for (const asset of HUD_ASSETS) {
+      scene.load.image(asset.key, `${HUD_PATH}/${asset.file}`);
+    }
+  }
+
   constructor(scene) {
     this.scene = scene;
+
 
     const centerX = 960;
 
@@ -14,49 +66,31 @@ export default class HUD {
     // HEALTH
     // =================================
 
-    this.healthLabel = scene.add.text(
-      centerX,
-      35,
-      "HEALTH",
-      {
-        fontFamily: "Arial",
-        fontSize: "24px",
-        color: "#ffffff",
-        fontStyle: "bold"
-      }
-    ).setOrigin(0.5);
+    // One heart per damage step (maxHealth / damagePerHit).
+    // Each heart is an empty heart with a coloured heart on top
+    // that is cropped when only part of it is left.
+    HUD.createHeartTextures(scene);
 
-    this.healthBarBg = scene.add.rectangle(
-      centerX,
-      100,
-      400,
-      28,
-      0x444444
+    this.heartCount = Math.max(
+      1,
+      Math.round(GAME_SETTINGS.maxHealth / GAME_SETTINGS.damagePerHit)
     );
 
-    this.healthBarBg.setOrigin(0.5);
+    this.heartsContainer = scene.add.container(0, 0);
+    this.heartsContainer.setDepth(101);
 
-    this.healthBarFill = scene.add.rectangle(
-      centerX - 200,
-      100,
-      400,
-      28,
-      0x35d07f
-    );
+    this.heartsEmpty = [];
+    this.heartsFull = [];
 
-    this.healthBarFill.setOrigin(0, 0.5);
+    for (let i = 0; i < this.heartCount; i++) {
+      const empty = scene.add.image(0, 0, "hud-heart-empty");
+      const full = scene.add.image(0, 0, "hud-heart-full");
 
-    this.healthValueText = scene.add.text(
-      centerX,
-      100,
-      "100 / 100",
-      {
-        fontFamily: "Arial",
-        fontSize: "18px",
-        color: "#ffffff",
-        fontStyle: "bold"
-      }
-    ).setOrigin(0.5);
+      this.heartsContainer.add([empty, full]);
+
+      this.heartsEmpty.push(empty);
+      this.heartsFull.push(full);
+    }
 
     // =================================
     // SCORE / COINS / DISTANCE / COMBO
@@ -105,7 +139,7 @@ export default class HUD {
       {
         fontFamily: "Arial",
         fontSize: "26px",
-        color: "#aaaaaa",
+        color: "#dddddd",
         fontStyle: "bold"
       }
     ).setOrigin(0.5);
@@ -122,12 +156,12 @@ export default class HUD {
       }
     ).setOrigin(1, 0.5);
 
-    this.comboBaseColor = "#aaaaaa";
+    this.comboBaseColor = "#dddddd";
     this.lastMultiplier = 1;
     this.lastDistance = -1;
 
     // =================================
-    // POWER-UP INDICATORS (top-left)
+    // POWER-UP INDICATORS (top-right)
     // =================================
 
     this.powerUpRows = [];
@@ -136,7 +170,7 @@ export default class HUD {
       const y = 40 + i * 52;
 
       const label = scene.add.text(
-        40,
+        POWERUP_X,
         y,
         "",
         {
@@ -150,7 +184,7 @@ export default class HUD {
       ).setOrigin(0, 0.5);
 
       const barBg = scene.add.rectangle(
-        40,
+        POWERUP_X,
         y + 24,
         POWERUP_BAR_WIDTH,
         10,
@@ -158,7 +192,7 @@ export default class HUD {
       ).setOrigin(0, 0.5);
 
       const barFill = scene.add.rectangle(
-        40,
+        POWERUP_X,
         y + 24,
         POWERUP_BAR_WIDTH,
         10,
@@ -173,7 +207,7 @@ export default class HUD {
       barBg.setVisible(false);
       barFill.setVisible(false);
 
-      this.powerUpRows.push({ label, barBg, barFill });
+      this.powerUpRows.push({ label, barBg, barFill, icon: null });
     }
 
     // =================================
@@ -225,10 +259,6 @@ export default class HUD {
     // DEPTHS
     // =================================
 
-    this.healthLabel.setDepth(100);
-    this.healthBarBg.setDepth(100);
-    this.healthBarFill.setDepth(101);
-    this.healthValueText.setDepth(102);
     this.scoreText.setDepth(100);
     this.coinsText.setDepth(100);
     this.distanceText.setDepth(100);
@@ -236,6 +266,204 @@ export default class HUD {
     this.bestText.setDepth(100);
     this.bannerTitle.setDepth(120);
     this.bannerSub.setDepth(120);
+
+    this.createIcons();
+  }
+
+  // =================================
+  // OPTIONAL HUD ICONS
+  // =================================
+
+  createIcons() {
+    const textures = this.scene.textures;
+
+    // Panel behind the score block (below the texts, depth 100)
+    if (textures.exists("hud-score")) {
+      this.scorePanel = this.scene.add.image(0, 0, "hud-score");
+
+      this.scorePanel.setDepth(99);
+    }
+
+    this.coinIcon = null;
+
+    if (textures.exists("hud-coin")) {
+      this.coinIcon = this.scene.add.image(0, 155, "hud-coin");
+
+      this.fitIcon(this.coinIcon, 36);
+      this.coinIcon.setDepth(100);
+
+      this.placeCoinIcon();
+    }
+
+    this.layoutHud();
+  }
+
+  // =================================
+  // HEART TEXTURES (drawn once by code)
+  // =================================
+
+  static createHeartTextures(scene) {
+    if (scene.textures.exists("hud-heart-full")) return;
+
+    const k = HEART_TEXTURE_SCALE;
+
+    const make = (key, fillColor) => {
+      const g = scene.make.graphics({ x: 0, y: 0, add: false });
+
+      // Black outline
+      g.fillStyle(0x000000, 1);
+      g.fillCircle(23 * k, 24 * k, 19 * k);
+      g.fillCircle(49 * k, 24 * k, 19 * k);
+      g.fillTriangle(5 * k, 33 * k, 67 * k, 33 * k, 36 * k, 66 * k);
+
+      // Fill
+      g.fillStyle(fillColor, 1);
+      g.fillCircle(23 * k, 24 * k, 15 * k);
+      g.fillCircle(49 * k, 24 * k, 15 * k);
+      g.fillTriangle(9 * k, 31 * k, 63 * k, 31 * k, 36 * k, 60 * k);
+
+      g.generateTexture(key, HEART_W * k, HEART_H * k);
+      g.destroy();
+
+      scene.textures
+        .get(key)
+        .setFilter(Phaser.Textures.FilterMode.LINEAR);
+    };
+
+    make("hud-heart-empty", 0x3a3a3a);
+    make("hud-heart-full", 0xffffff);
+  }
+
+  // =================================
+  // TOP-LEFT LAYOUT
+  // Score panel in the corner, all the scoring inside it, and
+  // the hearts right below it.
+  // =================================
+
+  // Readable text: bold, black outline that grows with HUD_SCALE
+  styleText(text, size) {
+    text
+      .setFontSize(size * HUD_SCALE)
+      .setStroke("#000000", Math.round(4 * HUD_SCALE));
+  }
+
+  layoutHud() {
+    const box = SCORE_PANEL_BOX;
+
+    let width = box.width * HUD_SCALE;
+    let height = box.height * HUD_SCALE;
+
+    if (this.scorePanel) {
+      this.scorePanel.setOrigin(0, 0);
+
+      this.scorePanel.setScale(
+        Math.min(
+          width / this.scorePanel.width,
+          height / this.scorePanel.height
+        )
+      );
+
+      this.scorePanel.setPosition(box.left, box.top);
+
+      width = this.scorePanel.displayWidth;
+      height = this.scorePanel.displayHeight;
+    }
+
+    const left = box.left;
+    const top = box.top;
+    const centerX = left + width / 2;
+
+    const colLeft = left + width * SCORE_LAYOUT.colLeft;
+    const colRight = left + width * SCORE_LAYOUT.colRight;
+
+    const rowTop = top + height * SCORE_LAYOUT.rowTop;
+    const rowMiddle = top + height * SCORE_LAYOUT.rowMiddle;
+    const rowBottom = top + height * SCORE_LAYOUT.rowBottom;
+
+    this.styleText(this.scoreText, 26);
+    this.scoreText.setPosition(colLeft, rowTop);
+
+    this.styleText(this.coinsText, 26);
+    this.coinsText.setPosition(colRight, rowTop);
+
+    this.styleText(this.distanceText, 22);
+    this.distanceText.setPosition(colLeft, rowMiddle);
+
+    this.styleText(this.comboText, 22);
+    this.comboText.setPosition(colRight, rowMiddle);
+
+    this.styleText(this.bestText, 22);
+    this.bestText.setOrigin(0.5).setPosition(centerX, rowBottom);
+
+    // HEARTS: under the panel
+    const bottom = top + height;
+
+    const slot = width / this.heartCount;
+    const heartWidth = slot * 0.88;
+    const heartHeight = heartWidth * (HEART_H / HEART_W);
+
+    const heartsY = bottom + heartHeight / 2 + 8 * HUD_SCALE;
+
+    this.heartsContainer.setPosition(centerX, heartsY);
+
+    for (let i = 0; i < this.heartCount; i++) {
+      const x = (i - (this.heartCount - 1) / 2) * slot;
+
+      this.heartsEmpty[i]
+        .setPosition(x, 0)
+        .setDisplaySize(heartWidth, heartHeight);
+
+      this.heartsFull[i]
+        .setPosition(x, 0)
+        .setDisplaySize(heartWidth, heartHeight);
+    }
+
+    this.placeCoinIcon();
+  }
+
+  // Shows or hides the whole scoring + health HUD
+  // (hidden on the title screen)
+  setVisible(visible) {
+    const elements = [
+      this.scorePanel,
+      this.scoreText,
+      this.coinsText,
+      this.distanceText,
+      this.comboText,
+      this.bestText,
+      this.heartsContainer,
+      this.coinIcon
+    ];
+
+    for (const element of elements) {
+      if (element) element.setVisible(visible);
+    }
+
+    // Power-up rows come back by themselves in updatePowerUps()
+    if (!visible) {
+      for (const row of this.powerUpRows) {
+        row.label.setVisible(false);
+        row.barBg.setVisible(false);
+        row.barFill.setVisible(false);
+
+        if (row.icon) row.icon.setVisible(false);
+      }
+    }
+  }
+
+  // Scales an icon to a given on-screen height
+  fitIcon(image, height) {
+    image.setScale(height / image.height);
+  }
+
+  // The coin icon sits just left of the COINS text
+  placeCoinIcon() {
+    if (!this.coinIcon) return;
+
+    this.coinIcon.setPosition(
+      this.coinsText.x - this.coinsText.width / 2 - 28,
+      this.coinsText.y
+    );
   }
 
   // Red radial gradient drawn once into a canvas texture
@@ -291,19 +519,35 @@ export default class HUD {
       Math.min(1, health / maxHealth)
     );
 
-    this.healthBarFill.width = 400 * percentage;
+    // Same colour progression as the old bar
+    let color = 0xff3333;
 
     if (percentage > 0.60) {
-      this.healthBarFill.setFillStyle(0x35d07f);
+      color = 0x35d07f;
     } else if (percentage > 0.30) {
-      this.healthBarFill.setFillStyle(0xffa500);
-    } else {
-      this.healthBarFill.setFillStyle(0xff3333);
+      color = 0xffa500;
     }
 
-    this.healthValueText.setText(
-      `${health} / ${maxHealth}`
-    );
+    const perHeart = maxHealth / this.heartCount;
+
+    for (let i = 0; i < this.heartCount; i++) {
+      const fill = Math.max(
+        0,
+        Math.min(1, (health - i * perHeart) / perHeart)
+      );
+
+      const full = this.heartsFull[i];
+
+      full.setTint(color);
+      full.setAlpha(fill > 0 ? 1 : 0);
+
+      // A partly lost heart is cropped from the right
+      if (fill > 0 && fill < 1) {
+        full.setCrop(0, 0, full.width * fill, full.height);
+      } else {
+        full.setCrop();
+      }
+    }
 
     // Low-health warning (pulsing bar + red vignette)
     this.setLowHealth(percentage > 0 && percentage <= 0.30);
@@ -332,8 +576,8 @@ export default class HUD {
       });
 
       this.barTween = this.scene.tweens.add({
-        targets: [this.healthBarBg, this.healthBarFill],
-        scaleY: { from: 1, to: 1.5 },
+        targets: this.heartsContainer,
+        scale: { from: 1, to: 1.1 },
         duration: 450,
         yoyo: true,
         repeat: -1,
@@ -351,8 +595,7 @@ export default class HUD {
       }
 
       this.vignette.setAlpha(0);
-      this.healthBarBg.setScale(1);
-      this.healthBarFill.setScale(1);
+      this.heartsContainer.setScale(1);
     }
   }
 
@@ -363,6 +606,8 @@ export default class HUD {
   updateScore(score, coins) {
     this.scoreText.setText(`SCORE: ${score}`);
     this.coinsText.setText(`COINS: ${coins}`);
+
+    this.placeCoinIcon();
   }
 
   updateDistance(meters) {
@@ -380,7 +625,7 @@ export default class HUD {
   updateCombo(multiplier, streak) {
     const label = `COMBO x${formatMultiplier(multiplier)}`;
 
-    const baseColor = multiplier > 1 ? "#7dffb0" : "#aaaaaa";
+    const baseColor = multiplier > 1 ? "#7dffb0" : "#dddddd";
 
     if (
       label === this.comboText.text &&
@@ -434,12 +679,42 @@ export default class HUD {
         row.label.setVisible(false);
         row.barBg.setVisible(false);
         row.barFill.setVisible(false);
+
+        if (row.icon) row.icon.setVisible(false);
+
         continue;
       }
 
       row.label.setVisible(true);
       row.barBg.setVisible(true);
       row.barFill.setVisible(true);
+
+      // Optional icon (hud-<power-up key>), the label and bar
+      // move right to make room for it
+      const iconKey = `hud-${entry.key}`;
+      const hasIcon = this.scene.textures.exists(iconKey);
+
+      if (hasIcon) {
+        if (!row.icon) {
+          row.icon = this.scene.add
+            .image(POWERUP_X, 52 + i * 52, iconKey)
+            .setOrigin(0, 0.5)
+            .setDepth(100);
+        } else if (row.icon.texture.key !== iconKey) {
+          row.icon.setTexture(iconKey);
+        }
+
+        this.fitIcon(row.icon, 40);
+        row.icon.setVisible(true);
+      } else if (row.icon) {
+        row.icon.setVisible(false);
+      }
+
+      const rowX = hasIcon ? POWERUP_X + 52 : POWERUP_X;
+
+      row.label.x = rowX;
+      row.barBg.x = rowX;
+      row.barFill.x = rowX;
 
       if (row.label.text !== entry.label) {
         row.label.setText(entry.label);

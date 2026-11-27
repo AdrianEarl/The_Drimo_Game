@@ -11,6 +11,8 @@ import ScoreSystem from "../systems/ScoreSystem";
 import CoinSystem from "../systems/CoinSystem";
 import PowerUpSystem from "../systems/PowerUpSystem";
 import BackgroundSystem from "../systems/BackgroundSystem";
+import BirdSystem from "../systems/BirdSystem.js";
+import SoundSystem from "../systems/SoundSystem.js/index.js";
 
 import HUD from "../ui/HUD";
 import GameOverScreen from "../ui/GameOverScreen";
@@ -27,7 +29,7 @@ const JUMP_FRAME_COUNT = 5;
 const DEATH_FRAME_COUNT = 5;
 
 // Coin pickup sound
-const COIN_SFX_PATH = "/assets/audio/coin.mp3";
+const COIN_SFX_PATH = "/assets/soundassets/Coin-Sound-Effect.mp3";
 
 const formatMultiplier = (value) =>
   Number.isInteger(value) ? String(value) : value.toFixed(1);
@@ -60,6 +62,12 @@ export default class GameScene extends Phaser.Scene {
   preload() {
     // BACKGROUNDS (with their start / end transitions)
     BackgroundSystem.preload(this);
+
+    // BACKGROUND BIRDS
+    BirdSystem.preload(this);
+
+    // HUD ICONS
+    HUD.preload(this);
 
     // OBSTACLES
     ObstacleSystem.preload(this);
@@ -106,6 +114,9 @@ export default class GameScene extends Phaser.Scene {
 
     // SOUND EFFECTS
     this.load.audio("coin-sfx", COIN_SFX_PATH);
+
+    // ALL OTHER SOUNDS + MUSIC (see SoundSystem.js)
+    SoundSystem.preload(this);
   }
 
   // =================================
@@ -145,6 +156,8 @@ export default class GameScene extends Phaser.Scene {
       this.worldHeight
     );
 
+    this.sfx = new SoundSystem(this);
+
     this.createBackground();
     this.createBoundaries();
     this.createControls();
@@ -168,6 +181,9 @@ export default class GameScene extends Phaser.Scene {
 
   createBackground() {
     this.backgroundSystem = new BackgroundSystem(this);
+
+    // Random birds flying over the searoad / baywalk backgrounds
+    this.birdSystem = new BirdSystem(this);
   }
 
   // =================================
@@ -176,6 +192,8 @@ export default class GameScene extends Phaser.Scene {
 
   updateBackground(deltaSeconds, speed = this.backgroundSpeed) {
     this.backgroundSystem.update(deltaSeconds, speed);
+
+    this.birdSystem.update(deltaSeconds, speed);
   }
 
   // =================================
@@ -344,7 +362,7 @@ export default class GameScene extends Phaser.Scene {
     this.obstacleSystem = new ObstacleSystem(
       this,
       this.collisionSystem,
-      () => this.healthSystem.takeDamage()
+      () => this.handleObstacleHit()
     );
 
     this.coinSystem = new CoinSystem(
@@ -364,6 +382,16 @@ export default class GameScene extends Phaser.Scene {
 
     this.powerUpSystem.speed =
       GAME_SETTINGS.obstacleSpeed;
+  }
+
+  // Called by ObstacleSystem when an obstacle hurts Drimo
+  handleObstacleHit() {
+    const hurt = this.healthSystem.takeDamage();
+
+    // A fatal hit plays the death sound instead (see endGame)
+    if (hurt && !this.dying) {
+      this.sfx.play("hit");
+    }
   }
 
   // =================================
@@ -390,6 +418,8 @@ export default class GameScene extends Phaser.Scene {
 
     if (result === "complete") {
       const multiplier = this.scoreSystem.completeGroup();
+
+      this.sfx.play("perfect");
 
       this.hud.spawnFloatingText(
         x,
@@ -490,6 +520,8 @@ export default class GameScene extends Phaser.Scene {
 
     this.scoreSystem.addBonus(GAME_SETTINGS.milestoneBonus);
 
+    this.sfx.play("milestone");
+
     this.hud.showBanner(
       `${meters} M`,
       `${event.title}  +${GAME_SETTINGS.milestoneBonus}`
@@ -536,6 +568,9 @@ export default class GameScene extends Phaser.Scene {
   enterTitle() {
     this.state = "title";
     this.menus.showTitle();
+
+    // No score / health HUD behind the title screen
+    this.hud.setVisible(false);
   }
 
   beginCountdown() {
@@ -545,6 +580,8 @@ export default class GameScene extends Phaser.Scene {
 
     this.menus.hideTitle();
     this.flushKeys();
+
+    this.hud.setVisible(true);
   }
 
   pauseGame() {
@@ -553,6 +590,7 @@ export default class GameScene extends Phaser.Scene {
     this.time.paused = true;
     this.tweens.pauseAll();
     this.anims.pauseAll();
+    this.sound.pauseAll();
 
     this.menus.showPause();
   }
@@ -569,6 +607,7 @@ export default class GameScene extends Phaser.Scene {
     this.time.paused = false;
     this.tweens.resumeAll();
     this.anims.resumeAll();
+    this.sound.resumeAll();
   }
 
   restartGame() {
@@ -593,6 +632,9 @@ export default class GameScene extends Phaser.Scene {
     this.healthSystem.destroy();
     this.drimo.playDeath();
 
+    this.sfx.stopMusic();
+    this.sfx.play("death");
+
     this.cameras.main.shake(450, 0.02, true);
   }
 
@@ -601,6 +643,8 @@ export default class GameScene extends Phaser.Scene {
 
     this.gameOver = true;
     this.state = "gameover";
+
+    this.sfx.play("gameover");
 
     // Lets the death animation finish on its last frame
     this.drimo.stopAnimation();
@@ -695,12 +739,16 @@ export default class GameScene extends Phaser.Scene {
       if (number !== this.lastCountdownNumber) {
         this.lastCountdownNumber = number;
         this.menus.showCountdown(String(number));
+        this.sfx.play("countdown");
       }
 
       return;
     }
 
     this.menus.showCountdown("GO!", true);
+
+    this.sfx.play("go");
+    this.sfx.playMusic();
 
     // Presses made during the countdown must not trigger actions
     this.flushKeys();
@@ -785,7 +833,9 @@ export default class GameScene extends Phaser.Scene {
     ].some(Boolean);
 
     if (jumpPressed) {
-      this.drimo.startJump();
+      if (this.drimo.startJump()) {
+        this.sfx.play("jump");
+      }
     }
 
     // EVENTS + DIFFICULTY

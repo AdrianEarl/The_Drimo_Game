@@ -115,6 +115,13 @@ export default class CoinSystem {
   // =================================
 
   canSpawnAt(x, y) {
+    // Never on the white space or next to a transition
+    const background = this.scene.backgroundSystem;
+
+    if (background && background.isBlocked(x, this.coinSize / 2)) {
+      return false;
+    }
+
     const coinBounds = new Phaser.Geom.Rectangle(
       x - this.coinSize / 2,
       y - this.coinSize / 2,
@@ -134,6 +141,31 @@ export default class CoinSystem {
         Phaser.Geom.Intersects.RectangleToRectangle(
           coinBounds,
           obstacle.getBounds()
+        )
+      ) {
+        return false;
+      }
+    }
+
+    // Keep clear of power-ups
+    const powerUps = this.scene.powerUpSystem?.items || [];
+
+    for (const item of powerUps) {
+      if (!item || !item.sprite || !item.sprite.active) continue;
+
+      const bounds = item.sprite.getBounds();
+
+      const padded = new Phaser.Geom.Rectangle(
+        bounds.x - 20,
+        bounds.y - 20,
+        bounds.width + 40,
+        bounds.height + 40
+      );
+
+      if (
+        Phaser.Geom.Intersects.RectangleToRectangle(
+          coinBounds,
+          padded
         )
       ) {
         return false;
@@ -269,6 +301,13 @@ export default class CoinSystem {
 
   resolveGroupIfDone(group, x, y) {
     if (group.resolved) return;
+
+    // Every coin of the group was removed (white space / transition)
+    if (group.total <= 0) {
+      group.resolved = true;
+      return;
+    }
+
     if (group.collected + group.missed < group.total) return;
 
     group.resolved = true;
@@ -304,6 +343,22 @@ export default class CoinSystem {
       hitboxes.foot,
       coin.getBounds()
     );
+  }
+
+  // =================================
+  // 06b. WHITE SPACE / TRANSITION ZONES
+  // A coin that is still off-screen but sits on the white space
+  // or next to a transition is removed.
+  // =================================
+
+  isInBlockedZone(coin) {
+    const background = this.scene.backgroundSystem;
+
+    if (!background) return false;
+
+    if (coin.x <= GAME_SETTINGS.width) return false;
+
+    return background.isBlocked(coin.x, this.coinSize / 2);
   }
 
   // =================================
@@ -357,6 +412,21 @@ export default class CoinSystem {
       }
 
       coin.x -= this.speed * deltaSeconds;
+
+      if (this.isInBlockedZone(coin)) {
+        const group = coin.group;
+        const y = coin.y;
+
+        coin.destroy();
+        this.coins.splice(i, 1);
+
+        if (group) {
+          group.total -= 1;
+          this.resolveGroupIfDone(group, 200, y);
+        }
+
+        continue;
+      }
 
       // RAIN coins drift downward
       if (coin.vy) {

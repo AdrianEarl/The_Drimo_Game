@@ -1,4 +1,12 @@
 // Title screen, pause menu and the 3-2-1 countdown.
+
+const TITLE_CARD_KEEPS_SUBTITLE = false;
+
+// Title card size. 1 = fit inside a 1000 x 420 box, 2 = twice that.
+// The card is never wider than the screen (see MAX_WIDTH below).
+const TITLE_CARD_SIZE = 2;
+const TITLE_CARD_MAX_WIDTH = 1880;
+
 export default class MenuScreens {
   constructor(scene) {
     this.scene = scene;
@@ -94,6 +102,26 @@ export default class MenuScreens {
       this.titlePrompt,
       controls
     ]);
+
+    // Title card image (public/assets/hud/Title-Card.png).
+    // It replaces the DRIMO / ENDLESS RUNNER texts. Set
+    // TITLE_CARD_KEEPS_SUBTITLE to true to keep the subtitle.
+    if (scene.textures.exists("hud-title")) {
+      const card = scene.add.image(960, 220, "hud-title");
+
+      card.setScale(
+        Math.min(
+          (1000 * TITLE_CARD_SIZE) / card.width,
+          (420 * TITLE_CARD_SIZE) / card.height,
+          TITLE_CARD_MAX_WIDTH / card.width
+        )
+      );
+
+      title.setVisible(false);
+      subtitle.setVisible(!!TITLE_CARD_KEEPS_SUBTITLE);
+
+      this.titleContainer.add(card);
+    }
   }
 
   showTitle() {

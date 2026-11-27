@@ -3,6 +3,18 @@ import { GAME_SETTINGS } from "../config/gameConfig";
 
 const TEXTURE_SIZE = 72;
 
+// Space kept between a power-up and obstacles / coins (pixels)
+const SPAWN_CLEARANCE = 24;
+
+// Same rectangle, grown on every side
+const padRect = (rect, pad) =>
+  new Phaser.Geom.Rectangle(
+    rect.x - pad,
+    rect.y - pad,
+    rect.width + pad * 2,
+    rect.height + pad * 2
+  );
+
 // The magnet is the only power-up in the game.
 const TYPES = {
   magnet: {
@@ -145,7 +157,7 @@ export default class PowerUpSystem {
       if (
         Phaser.Geom.Intersects.RectangleToRectangle(
           bounds,
-          sprite.getBounds()
+          padRect(sprite.getBounds(), SPAWN_CLEARANCE)
         )
       ) {
         return false;
@@ -160,7 +172,7 @@ export default class PowerUpSystem {
       if (
         Phaser.Geom.Intersects.RectangleToRectangle(
           bounds,
-          coin.getBounds()
+          padRect(coin.getBounds(), SPAWN_CLEARANCE)
         )
       ) {
         return false;
@@ -182,6 +194,16 @@ export default class PowerUpSystem {
       size / 2;
 
     const x = GAME_SETTINGS.width + 100;
+
+    // Never on the white space or next to a transition
+    const background = this.scene.backgroundSystem;
+
+    if (
+      background &&
+      background.isBlocked(x, size / 2 + SPAWN_CLEARANCE)
+    ) {
+      return false;
+    }
 
     let spawnY = null;
 
@@ -221,19 +243,13 @@ export default class PowerUpSystem {
   // COLLECTION
   // =================================
 
+  // ONLY THE FEET PICK POWER-UPS UP (not the head or body)
   collides(item) {
     const hitboxes = this.scene.drimo.getHitboxes();
-    const bounds = item.sprite.getBounds();
 
-    return (
-      Phaser.Geom.Intersects.RectangleToRectangle(
-        hitboxes.body,
-        bounds
-      ) ||
-      Phaser.Geom.Intersects.RectangleToRectangle(
-        hitboxes.foot,
-        bounds
-      )
+    return Phaser.Geom.Intersects.RectangleToRectangle(
+      hitboxes.foot,
+      item.sprite.getBounds()
     );
   }
 
@@ -244,6 +260,10 @@ export default class PowerUpSystem {
 
     // Picking up another magnet refreshes the timer
     this.active[item.type] = def.duration;
+
+    if (this.scene.sfx) {
+      this.scene.sfx.play("powerup");
+    }
 
     this.scene.hud.spawnFloatingText(
       x,
@@ -301,6 +321,21 @@ export default class PowerUpSystem {
       item.time += deltaSeconds;
 
       item.sprite.x -= this.speed * deltaSeconds;
+
+      // Still off-screen but on the white space / next to a
+      // transition: remove it
+      if (
+        item.sprite.x > GAME_SETTINGS.width &&
+        this.scene.backgroundSystem &&
+        this.scene.backgroundSystem.isBlocked(
+          item.sprite.x,
+          GAME_SETTINGS.powerUpSize / 2
+        )
+      ) {
+        item.sprite.destroy();
+        this.items.splice(i, 1);
+        continue;
+      }
 
       item.sprite.setScale(
         item.baseScale * (1 + 0.1 * Math.sin(item.time * 6))

@@ -35,12 +35,25 @@ export const GAME_SETTINGS = {
   obstacleSpeed: 450,
   obstacleWidth: 320,
   obstacleHeight: 100,
+
+  // Size multiplier for obstacles. Types with enlarge: false
+  // (puddle, pothole) ignore it - see OBSTACLE_TYPES.
+  obstacleEnlarge: 1.5,
   obstacleSpawnMin: 3500,
   obstacleSpawnMax: 6500,
 
-  // Single source of truth for the obstacle damage hitbox
-  // (used by both collision checks and the debug drawing)
-  obstacleHitboxScale: 0.90,
+  // Obstacle damage hitbox = the obstacle's real SHAPE (its opaque
+  // pixels), not a rectangle. Pixels with alpha below this value
+  // (0-255) are ignored, which also skips soft ground shadows.
+  obstacleMaskAlpha: 200,
+
+  // How many obstacle pixels (texels) Drimo's foot must overlap
+  // before it hurts. Higher = more forgiving at the edges.
+  obstacleMinOverlapTexels: 3,
+
+  // Fraction of Drimo's foot hitbox width ignored on EACH side when
+  // checking obstacle damage, so clipping an edge does not hurt.
+  footDamageInset: 0.2,
 
   // If a spawn fails (no clear spot), retry after this many seconds
   spawnRetryDelay: 0.3,
@@ -72,7 +85,7 @@ export const GAME_SETTINGS = {
   // JUMP
   // =================================
   jumpHeight: 170,         // pixels
-  jumpDuration: 1.0,       // seconds at normal speed
+  jumpDuration: 1.5,       // seconds at normal speed (was 1.0)
 
   // =================================
   // POWER-UPS

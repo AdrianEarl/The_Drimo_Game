@@ -93,7 +93,30 @@ export default class Drimo {
     this.sprite.setScale(GAME_SETTINGS.playerScale);
     this.sprite.setDepth(10);
 
+    // The run sprite's on-screen height is the reference size.
+    // Jump and death frames are scaled to match it, even if
+    // their image files have a different pixel size.
+    this.runDisplayHeight = this.sprite.displayHeight;
+
+    // Keep the size right whenever an animation changes frame
+    // (covers the death animation, which plays by itself)
+    this.sprite.on("animationstart", () => this.fitToRunSize());
+    this.sprite.on("animationupdate", () => this.fitToRunSize());
+
     this.sprite.play("drimo-run");
+  }
+
+  // Scales the current frame so it is as tall as the run sprite
+  fitToRunSize() {
+    const frame = this.sprite.frame;
+
+    if (!frame || !frame.height) return;
+
+    const scale = this.runDisplayHeight / frame.height;
+
+    if (Math.abs(this.sprite.scaleX - scale) > 0.0001) {
+      this.sprite.setScale(scale);
+    }
   }
 
   createShadow() {
@@ -135,6 +158,7 @@ export default class Drimo {
       this.sprite.clearTint();
       this.sprite.anims.timeScale = 1;
       this.sprite.play("drimo-death");
+      this.fitToRunSize();
 
       return;
     }
@@ -179,6 +203,8 @@ export default class Drimo {
     );
 
     this.sprite.setTexture(this.jumpFrames[index].key);
+
+    this.fitToRunSize();
   }
 
   endJumpAnimation() {
@@ -188,6 +214,7 @@ export default class Drimo {
 
     if (this.alive) {
       this.sprite.play("drimo-run");
+      this.fitToRunSize();
     }
   }
 
@@ -270,6 +297,9 @@ export default class Drimo {
         this.showJumpFrame(t);
       }
     }
+
+    // Safety: always keep the sprite at the run sprite's size
+    this.fitToRunSize();
 
     // APPLY POSITION
     this.sprite.x = this.baseX;
